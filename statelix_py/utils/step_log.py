@@ -1,0 +1,1 @@
+class StepLogger:\n    def start_step(self, model, params):\n        print(f"Start step: {model} with {params}")\n        return "step_id_001"\n    def complete_step(self, step_id, status, results):\n        print(f"Complete step {step_id}: {status}, {results}")
