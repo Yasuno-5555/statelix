@@ -42,6 +42,13 @@ set(CORE_SOURCES
     src/linear_model/elastic_net.cpp
     src/time_series/dtw.cpp
     src/search/kdtree.cpp
+    src/time_series/cpd.cpp
+    src/time_series/kalman.cpp
+    src/spatial/icp.cpp
+    src/signal/wavelet.cpp
+    src/ml/gbdt.cpp
+    src/ml/fm.cpp
+    src/linalg/sparse_core.cpp
 )
 
 set(CORE_HEADERS
@@ -56,6 +63,12 @@ set(CORE_HEADERS
     src/optimization/optimization.h
     src/time_series/dtw.h
     src/search/kdtree.h
+    src/time_series/cpd.h
+    src/time_series/kalman.h
+    src/spatial/icp.h
+    src/signal/wavelet.h
+    src/ml/gbdt.h
+    src/optimization/lbfgs.h
 )
 
 # Python モジュールの作成
