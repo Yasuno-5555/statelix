@@ -1,4 +1,4 @@
-# Getting Started with Statelix v2.2
+# Getting Started with Statelix v2.3
 
 ## Environment Setup Details
 
@@ -15,6 +15,10 @@ pip install .
 ```
 
 If you encounter errors about `CMake`, ensure `cmake --version` works in your terminal.
+Alternatively, use the provided script to build a standalone executable:
+```powershell
+python packaging/build_exe.py
+```
 
 ## Advanced Usage
 
@@ -51,7 +55,24 @@ GUI Steps:
 4. Set "Instrument (Z)" -> The instrument variable.
 5. Run. Check the "First Stage F" statistic (>10 is widely considered strong).
 
-### 3. Bayesian Logistic Regression
+### 3. Propensity Score Matching (PSM)
+Matches treated units to control units using similar propensity scores.
+Statelix uses **HNSW** for matching, allowing it to handle millions of samples in seconds.
+
+GUI Steps:
+1. Select "Causal: PSM (Propensity Matching)".
+2. Set "Outcome (Y)" -> Your dependent variable.
+3. Set "Treatment (0/1)" (in Aux list) -> The binary treatment indicator.
+4. Set "Covariates (X)" -> Variables used to estimate propensity.
+5. Set "Caliper" -> Max allowed distance (in SD units). Default 0.2.
+6. Run.
+
+**Results:**
+- **ATT**: Average Treatment Effect on the Treated.
+- **Unmatched Ratio**: Portion of treated units discarded due to caliper.
+- **Overlap SD**: Standard Deviation of scores (check theoretical violations).
+
+### 4. Bayesian Logistic Regression
 Uses Hamiltonian Monte Carlo (HMC) to sample from the posterior distribution.
 Unlike standard Logistic Regression which gives a point estimate (MLE), this gives you a *distribution* of likely coefficients.
 

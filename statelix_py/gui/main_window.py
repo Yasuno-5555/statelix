@@ -1,7 +1,7 @@
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QTabWidget, QSplitter, QMessageBox, QLabel
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
+from PySide6.QtCore import Qt, QThread, Signal, Slot
 
 from statelix_py.gui.panels.data_panel import DataPanel
 from statelix_py.gui.panels.model_panel import ModelPanel
@@ -14,8 +14,8 @@ import numpy as np
 
 # --- Worker Thread for Analysis ---
 class AnalysisWorker(QThread):
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str)
+    finished = Signal(dict)
+    error = Signal(str)
 
     def __init__(self, params, df):
         super().__init__()
@@ -248,7 +248,7 @@ class MainWindow(QMainWindow):
         self.worker.error.connect(self.on_analysis_error)
         self.worker.start()
 
-    @pyqtSlot(dict)
+    @Slot(dict)
     def on_analysis_finished(self, result):
         self.model_panel.run_btn.setEnabled(True)
         self.statusBar().showMessage("Analysis Completed.")
@@ -262,7 +262,7 @@ class MainWindow(QMainWindow):
         else:
             self.output_tabs.setCurrentWidget(self.result_panel)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def on_analysis_error(self, msg):
         self.model_panel.run_btn.setEnabled(True)
         self.statusBar().showMessage("Error")

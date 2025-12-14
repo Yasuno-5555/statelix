@@ -1,15 +1,15 @@
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, QTableView, 
     QHeaderView, QHBoxLayout, QFrame, QMessageBox
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PySide6.QtCore import Qt, Signal
 import pandas as pd
 import os
 from statelix_py.core.data_manager import DataManager
 from statelix_py.gui.models.pandas_model import PandasModel
 
 class DataPanel(QWidget):
-    data_loaded = pyqtSignal(object) # Signal carrying the DataFrame
+    data_loaded = Signal(object) # Signal carrying the DataFrame
 
     def __init__(self):
         super().__init__()

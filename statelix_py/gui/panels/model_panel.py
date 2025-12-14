@@ -1,11 +1,11 @@
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QComboBox, QFrame, QHBoxLayout, 
     QPushButton, QFormLayout, QListWidget, QSpinBox, QDoubleSpinBox, QGroupBox
 )
-from PyQt6.QtCore import pyqtSignal
+from PySide6.QtCore import Signal
 
 class ModelPanel(QWidget):
-    run_requested = pyqtSignal(dict) # Signal to trigger execution
+    run_requested = Signal(dict) # Signal to trigger execution
 
     def __init__(self):
         super().__init__()

@@ -3,6 +3,7 @@ import sys
 import subprocess
 import shutil
 from pathlib import Path
+import ctypes.util
 
 def build():
     # Base Project Path
@@ -40,23 +41,50 @@ def build():
         "--hidden-import=scipy.sparse.csgraph",
         "--hidden-import=scipy.special.cython_special",
         "--hidden-import=pandas",
+        "--hidden-import=PySide6",
         
-        # Collect Data (Icons if any)
-        # "--add-data=resources;resources", 
+        # Aggressive collection for heavy libs
+        "--collect-all=pandas",
+        "--collect-all=numpy",
+        "--collect-all=sklearn",
+        "--collect-all=scipy",
+        "--collect-all=PySide6",
         
         # Main Script
         str(entry_point)
     ]
     
-    # Check for C++ Extension
-    # If the user ran 'python setup.py build_ext --inplace', the .pyd should be in statelix_py/core
-    # We rely on PyInstaller's auto-analysis to find 'statelix_py.core.cpp_binding' imports.
+    # --- FIX: Bundling Python DLL explicitly ---
+    # PyInstaller sometimes fails to find pythonXX.dll if not in standard locations
+    dll_name = f"python{sys.version_info.major}{sys.version_info.minor}.dll"
     
-    print("Staritng PyInstaller Build...")
+    # Check default install location
+    dll_path = Path(sys.base_prefix) / dll_name
+    
+    if not dll_path.exists():
+        # Fallback: Try searching PATH
+        found = ctypes.util.find_library(dll_name[:-4])
+        if found:
+            dll_path = Path(found)
+    
+    if dll_path.exists():
+        print(f"[INFO] Explicitly bundling Python DLL: {dll_path}")
+        # Format: source;dest (Windows)
+        cmd.append(f"--add-binary={dll_path};.")
+    else:
+        print(f"[WARNING] Could not locate {dll_name}. Build might fail at runtime.")
+
+    print("Starting PyInstaller Build...")
     print(f"Command: {' '.join(cmd)}")
     
     try:
         subprocess.check_call(cmd)
+        
+        # --- License Compliance ---
+        print("[Compliance] Copying License Files...")
+        shutil.copy(project_dir / "LICENSE", dist_dir / "Statelix" / "LICENSE")
+        shutil.copy(project_dir / "NOTICE.txt", dist_dir / "Statelix" / "NOTICE.txt")
+
         print("\n" + "="*50)
         print(f"Build Success! Executable is at:\n{dist_dir / 'Statelix' / 'Statelix.exe'}")
         print("="*50)

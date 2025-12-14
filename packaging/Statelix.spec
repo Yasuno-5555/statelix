@@ -1,12 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
+
+datas = []
+binaries = [('C:\\Users\\kouno\\AppData\\Local\\Programs\\Python\\Python310\\python310.dll', '.')]
+hiddenimports = ['statelix_py.models']
+tmp_ret = collect_all('pandas')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('numpy')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('sklearn')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('scipy')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
+tmp_ret = collect_all('PySide6')
+datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
     ['C:\\Users\\kouno\\Desktop\\Projects\\statelix\\statelix_py\\app.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
-    hiddenimports=['statelix_py.models', 'sklearn', 'sklearn.linear_model', 'sklearn.neighbors', 'sklearn.utils._typedefs', 'scipy.sparse.csgraph', 'scipy.special.cython_special', 'pandas'],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

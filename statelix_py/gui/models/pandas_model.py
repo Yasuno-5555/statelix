@@ -1,4 +1,4 @@
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
 
 class PandasModel(QAbstractTableModel):
     def __init__(self, data=None):

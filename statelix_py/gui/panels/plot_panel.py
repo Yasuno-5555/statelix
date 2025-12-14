@@ -2,7 +2,7 @@ import matplotlib
 matplotlib.use('QtAgg')
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QComboBox, QLabel, QHBoxLayout
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QComboBox, QLabel, QHBoxLayout
 
 class PlotPanel(QWidget):
     def __init__(self):
