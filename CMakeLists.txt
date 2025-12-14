@@ -49,6 +49,8 @@ set(CORE_SOURCES
     src/ml/gbdt.cpp
     src/ml/fm.cpp
     src/linalg/sparse_core.cpp
+    # v1.1 additions
+    src/optimization/objective.cpp
 )
 
 set(CORE_HEADERS
@@ -69,6 +71,12 @@ set(CORE_HEADERS
     src/signal/wavelet.h
     src/ml/gbdt.h
     src/optimization/lbfgs.h
+    # v1.1 additions
+    src/optimization/objective.h
+    src/optimization/penalizer.h
+    src/glm/glm_base.h
+    src/glm/glm_solver.h
+    src/glm/glm_legacy.h
 )
 
 # Python モジュールの作成
