@@ -406,7 +406,7 @@ private:
      * @brief Random level generation (geometric distribution)
      */
     int random_level() {
-        std::uniform_real_distribution<double> dist(0.0, 1.0);
+        std::uniform_real_distribution<double> dist(1e-10, 1.0);
         double r = dist(rng_);
         return static_cast<int>(-std::log(r) * config.level_mult);
     }
@@ -588,7 +588,7 @@ private:
             sorted.push_back(candidates.top());
             candidates.pop();
         }
-        std::sort(sorted.begin(), sorted.end());
+
         
         for (int i = 0; i < std::min(M, static_cast<int>(sorted.size())); ++i) {
             result.push_back(sorted[i].id);

@@ -1,51 +1,218 @@
+from PyQt6.QtWidgets import (
+    QMainWindow, QWidget, QVBoxLayout, QTabWidget, QSplitter, QMessageBox, QLabel
+)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
+
 from statelix_py.gui.panels.data_panel import DataPanel
 from statelix_py.gui.panels.model_panel import ModelPanel
 from statelix_py.gui.panels.result_panel import ResultPanel
 from statelix_py.gui.panels.plot_panel import PlotPanel
 
+import time
+import pandas as pd
+import numpy as np
+
+# --- Worker Thread for Analysis ---
+class AnalysisWorker(QThread):
+    finished = pyqtSignal(dict)
+    error = pyqtSignal(str)
+
+    def __init__(self, params, df):
+        super().__init__()
+        self.params = params
+        self.df = df
+
+    def run(self):
+        try:
+            # Use High-Level SDK Models
+            from statelix_py.models import (
+                StatelixGraph, StatelixIV, StatelixDID, StatelixPSM,
+                BayesianLogisticRegression, StatelixHNSW
+            )
+            # Legacy fallback for old models
+            from statelix_py.core import cpp_binding 
+            
+            result_data = {}
+            summary = ""
+            start_time = time.time()
+            
+            model = self.params['model']
+            
+            # --- Graph Analysis (Refactored) ---
+            if "Graph" in model:
+                src_col = self.params.get('target') # L1
+                dst_col = self.params.get('features')[0] if self.params.get('features') else None # L2
+                
+                if not src_col or not dst_col:
+                    raise ValueError("Source and Target columns required.")
+
+                # SDK handles ID mapping automatically now
+                graph_model = StatelixGraph()
+                graph_model.fit(
+                    self.df[src_col].astype(str).values, 
+                    self.df[dst_col].astype(str).values,
+                    directed=("Louvain" not in model) # Louvain usually undirected
+                )
+                
+                summary += f"Model: {model}\nNodes: {graph_model.n_nodes_}\n"
+
+                if "Louvain" in model:
+                    res_df = graph_model.louvain(resolution=self.params['resolution'])
+                    summary += f"Found Communities.\n"
+                    # Add simple stats if we want, or just rely on table
+                    result_data["table"] = res_df.head(100)
+
+                elif "PageRank" in model:
+                    res_df = graph_model.pagerank(damping=self.params['damping'])
+                    result_data["table"] = res_df.head(100)
+
+            # --- Causal Inference (Refactored) ---
+            elif "Causal" in model:
+                y_col = self.params.get('target')  # Outcome
+                
+                if "PSM" in model:
+                   # PSM Map: L1=Outcome, L2=Covariates, L3=Treatment(0/1)
+                   x_cols = self.params.get('features') # Covariates
+                   t_col = self.params.get('aux')       # Treatment
+                   
+                   if not x_cols or not t_col: raise ValueError("Outcome, Covariates, and Treatment required.")
+                   
+                   y = self.df[y_col].values
+                   T = self.df[t_col].values
+                   X = self.df[x_cols].values
+                   
+                   psm = StatelixPSM(caliper=self.params['caliper'])
+                   psm.fit(y, T, X)
+                   
+                   s = psm.summary
+                   summary += f"Model: PSM (Propensity Score Matching)\n"
+                   summary += f"ATT: {s['ATT']:.4f} (SE: {s['SE']:.4f})\n"
+                   summary += f"N_Treated: {s['n_treated']}, N_Matched: {s['n_matched']}\n"
+                   summary += f"Unmatched Ratio: {s['unmatched_ratio']:.2%}\n"
+                   summary += "-"*30 + "\n"
+                   summary += "Score Summary:\n"
+                   summary += f"  Treated Mean: {s['score_summary']['treated_mean']:.3f}\n"
+                   summary += f"  Control Mean: {s['score_summary']['control_mean']:.3f}\n"
+                   summary += f"  Overlap SD:   {s['score_summary']['overlap_std']:.3f}\n"
+
+                elif "IV" in model:
+                     # L1=Y, L2=X_endog, L3=Instruments
+                     x_endog_col = self.params.get('features') # List
+                     z_col = self.params.get('aux')
+                     
+                     iv = StatelixIV()
+                     iv.fit(
+                         self.df[x_endog_col].values,
+                         self.df[y_col].values,
+                         self.df[z_col].values
+                     )
+                     
+                     res = iv.result_
+                     summary += f"Model: IV (2SLS)\nFirst Stage F: {res.first_stage_f:.4f}\n"
+                     # Coefs
+                     names = ["Intercept"] + x_endog_col
+                     for i, val in enumerate(res.coef):
+                        name = names[i] if i < len(names) else f"Var{i}"
+                        summary += f"{name:<15} {val:.4f}\n"
+
+                elif "Diff-in-Diff" in model:
+                     # L1=Y, L2=Treated(D), L3=Post(T)
+                     d_col = self.params.get('features')[0]
+                     t_col = self.params.get('aux')
+                     
+                     did = StatelixDID()
+                     did.fit(
+                         self.df[y_col].values,
+                         self.df[d_col].values,
+                         self.df[t_col].values
+                     )
+                     
+                     res = did.result_
+                     summary += f"Model: DID\nATT: {res.att:.4f} (p={res.p_value:.3f})\n"
+                     summary += f"Parallel Trends: {res.parallel_trends_valid}\n"
+
+            # --- Bayesian ---
+            elif "Bayesian" in model:
+                y_col = self.params.get('target')
+                x_cols = self.params.get('features')
+                
+                y = self.df[y_col].to_numpy(dtype=float)
+                X = self.df[x_cols].to_numpy(dtype=float)
+                
+                bayes_model = BayesianLogisticRegression(
+                    n_samples=self.params['samples'], 
+                    warmup=self.params['warmup']
+                )
+                bayes_model.fit(X, y)
+                
+                s = bayes_model.summary
+                summary += f"Model: Bayesian Logistic (HMC)\nSamples: {self.params['samples']}\n"
+                summary += f"Acceptance: {s['acceptance']:.2f}\n"
+                summary += f"Min ESS: {np.min(s['ess']):.1f}\n"
+                
+                means = s['mean']
+                stds = s['std']
+                for i, name in enumerate(x_cols):
+                    summary += f"{name:<15} Mean: {means[i]:.3f}  Std: {stds[i]:.3f}\n"
+                
+                result_data["trace"] = bayes_model.samples_
+
+            # --- Search (HNSW) ---
+            elif "HNSW" in model:
+                cols = self.params.get('features')
+                data = self.df[cols].to_numpy(dtype=float)
+                
+                hnsw = StatelixHNSW(
+                    M=self.params['M'], 
+                    ef_construction=self.params['ef']
+                )
+                hnsw.fit(data)
+                
+                summary += f"Model: HNSW Index\nBuilt successfully.\n"
+                summary += f"Index Size: {data.shape[0]} vectors.\n"
+
+            # --- Fallback (OLS, etc) ---
+            else:
+                 if "OLS" in model:
+                    y_col = self.params.get('target')
+                    x_cols = self.params.get('features')
+                    y = self.df[y_col].values
+                    X = self.df[x_cols].values
+                    res = cpp_binding.fit_ols_full(X, y)
+                    summary += f"Model: OLS\nR2: {res.r_squared:.4f}\n"
+                 else:
+                    summary += "Legacy model selected.\n"
+
+            elapsed = time.time() - start_time
+            summary += f"\nTime: {elapsed:.3f}s"
+            
+            result_data["summary"] = summary
+            self.finished.emit(result_data)
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.error.emit(str(e))
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Statelix v2.2")
-        self.resize(1200, 800) # Slightly wider for plots
+        self.resize(1200, 800)
+        self.worker = None # Keep reference
         
-        self.init_menu()
         self.init_ui()
-
-    def init_menu(self):
-        menubar = self.menuBar()
-        
-        # File Menu
-        file_menu = menubar.addMenu("ファイル")
-        file_menu.addAction("新規プロジェクト")
-        file_menu.addAction("開く...")
-        file_menu.addSeparator()
-        file_menu.addAction("終了", self.close)
-        
-        # Edit Menu
-        edit_menu = menubar.addMenu("編集")
-        
-        # View Menu
-        view_menu = menubar.addMenu("表示")
-        
-        # Help Menu
-        help_menu = menubar.addMenu("ヘルプ")
 
     def init_ui(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
         
-        main_layout = QVBoxLayout()
-        central_widget.setLayout(main_layout)
-
-        # Use QSplitter for resizable panels
         splitter = QSplitter(Qt.Orientation.Vertical)
         
-        # Initialize Panels
         self.data_panel = DataPanel()
         self.model_panel = ModelPanel()
         
-        # Output Tabs (Results + Plots)
         self.output_tabs = QTabWidget()
         self.result_panel = ResultPanel()
         self.plot_panel = PlotPanel()
@@ -53,237 +220,50 @@ class MainWindow(QMainWindow):
         self.output_tabs.addTab(self.result_panel, "テキスト結果")
         self.output_tabs.addTab(self.plot_panel, "プロット (Viz)")
         
-        # Connect Signals
+        # Connect
         self.model_panel.run_requested.connect(self.run_analysis)
         self.data_panel.data_loaded.connect(self.model_panel.update_columns)
-
-        # Add to Splitter
+        
         splitter.addWidget(self.data_panel)
         splitter.addWidget(self.model_panel)
-        splitter.addWidget(self.output_tabs) # Add Tabs instead of single panel
+        splitter.addWidget(self.output_tabs)
+        splitter.setSizes([200, 250, 350])
         
-        # Set initial sizes (optional)
-        splitter.setSizes([200, 200, 400])
-        splitter.setHandleWidth(5)
-
         main_layout.addWidget(splitter)
-        
-        # Status Bar
         self.statusBar().showMessage("Ready")
 
     def run_analysis(self, params):
-        self.statusBar().showMessage(f"Running analysis: {params['model']}...")
-        
         from statelix_py.core.data_manager import DataManager
-        from statelix_py.core import cpp_binding
-        import time
-
         dm = DataManager.instance()
-        
-        target_col = params.get('target')
-        feature_cols = params.get('features', [])
-        
-        if not target_col and "OLS" in params['model']:
-            self.statusBar().showMessage("Error: Target variable is required.")
+        if dm.df is None or dm.df.empty:
+            QMessageBox.warning(self, "Warning", "No data loaded.")
             return
 
-        if not feature_cols and "OLS" in params['model']:
-            self.statusBar().showMessage("Error: At least one feature is required.")
-            return
-
-        start_time = time.time()
-        result_data = {}
+        self.statusBar().showMessage(f"Running {params['model']}...")
+        self.model_panel.run_btn.setEnabled(False) # Disable button
         
-        try:
-            summary = ""
-            
-            # --- OLS (最小二乗法) ---
-            if "OLS" in params['model']:
-                if not target_col or not feature_cols:
-                    raise ValueError("Target and at least one Feature required for OLS.")
-                    
-                y = dm.get_column(target_col).to_numpy(dtype=float)
-                X = dm.get_data_matrix(feature_cols)
-                
-                res = cpp_binding.fit_ols(X, y)
-                
-                summary += f"Model: OLS Regression\nTarget: {target_col}\n"
-                summary += f"R-Squared: {res.r_squared:.4f}  (Adj: {res.adj_r_squared:.4f})\n"
-                summary += f"F-Stat: {res.f_statistic:.4f} (p={res.f_pvalue:.4e})\n"
-                summary += "-" * 50 + "\n"
-                summary += f"{'Variable':<15} {'Coef':<10} {'StdErr':<10} {'t-val':<10} {'p-val':<10}\n"
-                summary += f"{'Intercept':<15} {res.intercept:<10.4f} {'-':<10} {'-':<10} {'-':<10}\n"
-                for i, name in enumerate(feature_cols):
-                    summary += f"{name:<15} {res.coef[i]:<10.4f} {res.std_errors[i]:<10.4f} {res.t_values[i]:<10.4f} {res.p_values[i]:<10.4f}\n"
+        # Start Worker
+        self.worker = AnalysisWorker(params, dm.df)
+        self.worker.finished.connect(self.on_analysis_finished)
+        self.worker.error.connect(self.on_analysis_error)
+        self.worker.start()
 
-                # Plot
-                self.plot_panel.plot_ols_diagnostics(res.fitted_values, res.residuals)
-            
-            # --- K-Means (クラスタリング) ---
-            elif "K-Means" in params['model']:
-                if not feature_cols:
-                    raise ValueError("Features required for K-Means.")
-                
-                X = dm.get_data_matrix(feature_cols)
-                k = params.get('k', 3)
-                
-                res = cpp_binding.fit_kmeans(X, k)
-                
-                summary += f"Model: K-Means Clustering\nFeatures: {len(feature_cols)}\nK: {k}\n"
-                summary += f"Inertia: {res.inertia:.4f}\nIterations: {res.n_iter}\n"
-                summary += "-" * 40 + "\n"
-                summary += "Cluster Centers:\n"
-                for i in range(k):
-                    center_vals = ", ".join([f"{x:.2f}" for x in res.centroids[i]])
-                    summary += f"Cluster {i}: [{center_vals}]\n"
-                    
-                # Plot
-                self.plot_panel.plot_clustering(X, res.labels, res.centroids)
+    @pyqtSlot(dict)
+    def on_analysis_finished(self, result):
+        self.model_panel.run_btn.setEnabled(True)
+        self.statusBar().showMessage("Analysis Completed.")
+        
+        self.result_panel.display_result(result)
+        
+        # Handle Viz
+        if "trace" in result:
+            self.plot_panel.plot_hmc_trace(result['trace'])
+            self.output_tabs.setCurrentWidget(self.plot_panel)
+        else:
+            self.output_tabs.setCurrentWidget(self.result_panel)
 
-            # --- ANOVA (分散分析) ---
-            elif "ANOVA" in params['model']:
-                if not target_col or not feature_cols:
-                    raise ValueError("Target and Group (Feature) required for ANOVA.")
-                
-                data = dm.get_column(target_col).to_numpy(dtype=float)
-                # Assume first feature is group. Convert to integer codes if generic
-                group_col = dm.get_column(feature_cols[0])
-                if group_col.dtype == 'object':
-                    groups = group_col.astype('category').cat.codes.to_numpy(dtype='int32')
-                else:
-                    groups = group_col.to_numpy(dtype='int32')
-                    
-                res = cpp_binding.f_oneway(data, groups)
-                
-                summary += f"Model: One-Way ANOVA\nData: {target_col} by Group: {feature_cols[0]}\n"
-                summary += f"F-Statistic: {res.f_statistic:.4f}\nP-Value: {res.p_value:.4e}\n"
-                summary += "-" * 40 + "\n"
-                summary += f"{'Source':<10} {'DF':<5} {'SS':<10} {'MS':<10}\n"
-                summary += f"{'Between':<10} {res.df_between:<5} {res.ss_between:<10.2f} {res.ms_between:<10.2f}\n"
-                summary += f"{'Within':<10} {res.df_within:<5} {res.ss_within:<10.2f} {res.ms_within:<10.2f}\n"
-                summary += f"{'Total':<10} {res.df_total:<5} {res.ss_total:<10.2f}\n"
-                
-                # Plot
-                self.plot_panel.plot_boxplot(data, groups)
-
-            # --- AR Model (時系列) ---
-            elif "AR" in params['model']:
-                if not target_col:
-                    raise ValueError("Target (Time Series) required for AR.")
-                
-                series = dm.get_column(target_col).to_numpy(dtype=float)
-                p = params.get('p', 1)
-                
-                res = cpp_binding.fit_ar(series, p)
-                
-                summary += f"Model: Autoregressive AR({p})\nSeries: {target_col}\n"
-                summary += f"Sigma^2: {res.sigma2:.6f}\n"
-                summary += "-" * 40 + "\n"
-                summary += f"Const: {res.params[0]:.4f}\n"
-                for i in range(p):
-                    summary += f"Phi_{i+1}: {res.params[i+1]:.4f}\n"
-                
-                # Plot
-                self.plot_panel.plot_time_series(series, title=f"AR({p}) - {target_col}")
-
-            # --- Ridge Regression ---
-            elif "Ridge" in params['model']:
-                if not target_col or not feature_cols:
-                    raise ValueError("Target and Features required for Ridge.")
-                
-                y = dm.get_column(target_col).to_numpy(dtype=float)
-                X = dm.get_data_matrix(feature_cols)
-                alpha = params.get('alpha', 1.0)
-                
-                res = cpp_binding.fit_ridge(X, y, alpha)
-                
-                summary += f"Model: Ridge Regression (L2)\nLambda: {alpha}\n"
-                summary += f"{'Variable':<15} {'Coef':<10}\n"
-                for i, name in enumerate(feature_cols):
-                    summary += f"{name:<15} {res.coef[i]:<10.4f}\n"
-
-            # --- Cox Proportional Hazards ---
-            elif "Cox" in params['model']:
-                if not target_col or not feature_cols or not params.get('status'):
-                    raise ValueError("Time (Target), Status, and Covariates (Features) required for CoxPH.")
-                
-                time_vec = dm.get_column(target_col).to_numpy(dtype=float)
-                status_vec = dm.get_column(params['status']).to_numpy(dtype='int32')
-                X = dm.get_data_matrix(feature_cols)
-                
-                res = cpp_binding.fit_cox_ph(X, time_vec, status_vec)
-                
-                summary += f"Model: Cox Proportional Hazards\nTime: {target_col}, Status: {params['status']}\n"
-                summary += f"{'Variable':<15} {'Hazard Ratio':<15} {'Coef':<10}\n"
-                for i, name in enumerate(feature_cols):
-                    hr = 2.71828 ** res.coef[i]
-                    summary += f"{name:<15} {hr:<15.4f} {res.coef[i]:<10.4f}\n"
-
-            # --- GLM Models (Logistic, Poisson, etc) ---
-            elif "Regression" in params['model']: # Matches Logistic, Poisson, etc. (names end in Regression)
-                if not target_col or not feature_cols:
-                    raise ValueError("Target and Features required for GLM.")
-                
-                y = dm.get_column(target_col).to_numpy(dtype=float)
-                X = dm.get_data_matrix(feature_cols)
-                max_iter = params.get('max_iter', 50)
-                
-                model_name = params['model']
-                
-                if "Logistic" in model_name:
-                    res = cpp_binding.fit_logistic(X, y, max_iter)
-                elif "Poisson" in model_name:
-                    res = cpp_binding.fit_poisson(X, y, max_iter)
-                elif "Negative" in model_name:
-                    res = cpp_binding.fit_negbin(X, y) # NegBin has built-in looping
-                elif "Gamma" in model_name:
-                    res = cpp_binding.fit_gamma(X, y)
-                elif "Probit" in model_name:
-                    res = cpp_binding.fit_probit(X, y)
-                
-                summary += f"Model: {model_name}\nIterations: {getattr(res, 'iterations', 'N/A')}\n"
-                # Some have converged field
-                if hasattr(res, 'converged'):
-                     summary += f"Converged: {res.converged}\n"
-                
-                summary += f"{'Variable':<15} {'Coef':<10}\n"
-                for i, name in enumerate(feature_cols):
-                    summary += f"{name:<15} {res.coef[i]:<10.4f}\n"
-
-            else:
-                 summary = "Unknown Model Selected."
-
-            result_data = {
-                "success": True,
-                "summary": summary,
-                "hash": "cpp_backend_full"
-            }
-            if "r2" in locals(): result_data["r2"] = "N/A" # Default if not OLS
-            
-            # Switch to Output Tab
-            self.output_tabs.setCurrentIndex(0)
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            
-            # Clean up error message
-            msg = str(e)
-            if "RuntimeError:" in msg:
-                msg = msg.replace("RuntimeError:", "").strip()
-            
-            from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.critical(self, "Execution Error", f"Analysis Failed:\n\n{msg}")
-            
-            result_data = {
-                "success": False, 
-                "summary": f"Error: {msg}" 
-            }
-
-        elapsed = time.time() - start_time
-        summary_footer = f"\nAnalysis completed in {elapsed:.3f}s."
-        if "summary" in result_data:
-            result_data["summary"] += summary_footer
-            
-        self.result_panel.display_result(result_data)
-        self.statusBar().showMessage("Analysis completed.")
+    @pyqtSlot(str)
+    def on_analysis_error(self, msg):
+        self.model_panel.run_btn.setEnabled(True)
+        self.statusBar().showMessage("Error")
+        QMessageBox.critical(self, "Analysis Failed", msg)

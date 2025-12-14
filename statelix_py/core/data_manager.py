@@ -29,6 +29,11 @@ class DataManager:
     def filename(self, name: str):
         self._filename = name
 
+    def set_data(self, dataframe: pd.DataFrame, filepath: str = ""):
+        """Set both dataframe and filename at once."""
+        self._df = dataframe
+        self._filename = filepath
+
     def get_column(self, col_name):
         if self._df is not None and col_name in self._df.columns:
             return self._df[col_name]

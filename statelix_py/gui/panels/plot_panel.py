@@ -112,3 +112,27 @@ class PlotPanel(QWidget):
         ax.set_ylabel("Value")
         ax.legend()
         self.canvas.draw()
+
+    def plot_hmc_trace(self, trace_data):
+        """
+        Plot MCMC trace for diagnostics.
+        trace_data: (n_samples, n_params)
+        """
+        self.figure.clear()
+        
+        # Plot up to first 4 parameters for visibility
+        n_params = trace_data.shape[1]
+        n_plot = min(n_params, 4)
+        
+        ax = self.figure.add_subplot(111)
+        
+        for i in range(n_plot):
+            ax.plot(trace_data[:, i], label=f"Param {i}", alpha=0.8)
+            
+        ax.set_title("HMC Trace Plot (MCMC Sampling)")
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("Parameter Value")
+        ax.legend()
+        ax.grid(True, linestyle=':', alpha=0.6)
+        
+        self.canvas.draw()

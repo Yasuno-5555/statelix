@@ -1,211 +1,147 @@
 # Statelix v2.2
 
-高性能統計解析ソフトウェア - 学部生から研究者まで使える、R/Stataを超える体験
+Statelix: High-Performance Statistical Analysis Software
 
 ## 概要
 
-Statelixは、GUI操作とPythonコードの両方をサポートする統計解析ソフトウェアです。C++による高速計算コアとPythonの柔軟性を組み合わせ、再現性のある研究を支援します。
+Statelixは、C++の高速計算コアとPythonの柔軟なインターフェースを統合した次世代の統計解析ソフトウェアです。
+v2.2では、グラフ解析、因果推論、ベイズ統計、および近似最近傍探索（HNSW）機能が大幅に強化されました。
 
 ### 主な特徴
 
-- 🖥️ **直感的なGUI** - 高校生でも使える簡易モード、研究者向け詳細モード
-- ⚡ **高速計算** - C++ + Eigenによる最適化された線形代数演算
-- 🔌 **拡張可能** - Wasmプラグインによるカスタム分析
-- 📊 **豊富なモデル** - OLS, GLM, GLMM, Survival分析
-- 🔄 **完全な再現性** - ステップログ + データハッシュによる追跡
-- 📈 **インタラクティブ可視化** - Matplotlib/Plotlyによるグラフ
+- ⚡ **高速計算コア (C++17 + Eigen)**: 大規模行列演算、スパースグラフ処理を高速化
+- 📊 **多機能 GUI**: 研究者向けの直感的なパラメータ調整、インタラクティブな可視化
+- 📈 **高度な統計モデル**:
+    - **線形/一般化線形モデル**: OLS, Ridge, Logistic, Poisson, GLM
+    - **因果推論**: 操作変数法 (IV/2SLS), 差分の差分法 (DID)
+    - **グラフ解析**: Louvain Community Detection, PageRank
+    - **ベイズ統計**: Hamiltonian Monte Carlo (HMC/NUTS)
+    - **探索**: HNSW (Hierarchical Navigable Small World) Index
+- 🐍 **完全な Python API**: Scikit-Learn 互換のインターフェース
 
 ## インストール
 
 ### 必要要件
+- Windows / Linux / macOS
+- Python 3.8+
+- C++ コンパイラ (MSVC 2017+, GCC 9+, Clang 10+)
+- CMake 3.18+
 
-- Python 3.8以上
-- CMake 3.18以上（C++コアのビルド用）
-- C++17対応コンパイラ（GCC 7+, Clang 5+, MSVC 2017+）
+### ビルドとインストール
 
-### pipでインストール
-
-```bash
-pip install statelix
-```
-
-### ソースからビルド
+本バージョンより `setup.py` に CMake ビルドプロセスが統合されました。
 
 ```bash
-# リポジトリのクローン
+# クローン
 git clone https://github.com/statelix/statelix.git
 cd statelix
 
-# 仮想環境の作成
+# 仮想環境 (推奨)
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# Windows:
+venv\Scripts\activate
+# Linux/Mac:
+source venv/bin/activate
 
-# 依存関係のインストール
-pip install -e ".[dev]"
-
-# C++コアのビルド
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-cmake --build .
-cmake --install .
+# インストール (C++拡張モジュールのビルド含む)
+pip install .
 ```
 
-## 使い方
+開発モード（編集を即座に反映）:
+```bash
+pip install -e .
+```
 
-### GUIモード
+## 使い方 (GUI)
 
 ```bash
-statelix
+# アプリケーション起動
+python -m statelix_py.app
 ```
 
-アプリケーションが起動し、以下の操作が可能です：
+### v2.2 新機能の操作
+1. **データロード**: CSV等をドラッグ＆ドロップ。
+2. **モデル選択**:
+    - **Graph**: ノード間の関係性分析。「Source Node」「Target Node」列を選択。
+    - **Causal**: 因果効果の推定。「Outcome」「Treatment」「Instrument/Post」列を選択。
+    - **Bayesian**: HMCを用いたロジスティック回帰。「Samples」「Warmup」を指定可能。
+3. **可視化**: "プロット (Viz)" タブで HMC のトレースプロットや残差プロットを確認。
 
-1. **データ読み込み** - CSV, Excel, Parquet, Arrowファイルをドラッグ&ドロップ
-2. **モデル選択** - OLS, GLM, GLMM, Survivalから選択
-3. **変数設定** - 説明変数と目的変数を選択
-4. **実行** - ワンクリックで分析開始
-5. **結果確認** - 表形式結果とインタラクティブグラフ
-6. **エクスポート** - JSONL形式のステップログを保存
+## 使い方 (Python SDK)
 
-### Python SDK
+Scikit-Learn ライクな API で高度なモデルを利用可能です。
 
+### 1. 近似最近傍探索 (HNSW)
 ```python
-import pandas as pd
-from statelix_py.core import DataManager
-from statelix_py.models import OLSModel
+import numpy as np
+from statelix_py.models import StatelixHNSW
 
-# データ読み込み
-dm = DataManager()
-data = dm.load_csv("data.csv")
+# データ準備 (float64)
+X = np.random.randn(10000, 128)
 
-# OLSモデルの実行
-model = OLSModel()
-result = model.fit(data, target="y", features=["x1", "x2", "x3"])
+# インデックス構築
+model = StatelixHNSW(M=16, ef_construction=200)
+model.fit(X)
 
-# 結果の表示
-print(result.summary())
-print(f"R²: {result.r_squared:.4f}")
-print(f"MSE: {result.mse:.4f}")
-
-# 可視化
-result.plot_residuals()
+# 検索 (Top-5)
+indices = model.transform(X[:5])
+print(indices)
 ```
 
-### 詳細モード（研究者向け）
-
-詳細モードでは以下が可能です：
-
-- パラメータの細かな調整
-- Python生コードの直接実行
-- Wasmプラグインの利用
-- ステップごとのデータハッシュ確認
-
+### 2. ベイズ統計 (HMC Sampler)
 ```python
-from statelix_py.models import GLMMModel
+from statelix_py.models import StatelixHMC
 
-# GLMMモデルの詳細設定
-model = GLMMModel(
-    family="binomial",
-    link="logit",
-    max_iter=1000,
-    tol=1e-6
-)
-result = model.fit(
-    data,
-    target="outcome",
-    features=["age", "gender"],
-    random_effects=["subject_id"]
-)
+# 対数確率と勾配を定義 (例: 1D ガウス分布)
+def log_prob(x):
+    # log_p = -0.5 * x^2, grad = -x
+    return -0.5 * x[0]**2, [-x[0]]
+
+# サンプリング実行
+hmc = StatelixHMC(n_samples=1000, warmup=200)
+result = hmc.sample(log_prob, theta0=[0.0])
+
+print(result.summary)
+```
+
+### 3. 線形回帰 (OLS)
+```python
+from statelix_py.models import StatelixOLS
+
+model = StatelixOLS()
+model.fit(X_train, y_train)
+pred = model.predict(X_test)
 ```
 
 ## プロジェクト構造
 
 ```
 statelix/
-├── src/                    # C++コア
-│   ├── linear_model/      # 線形モデル実装
-│   ├── data/              # データ処理
-│   ├── utils/             # ユーティリティ
-│   └── bindings/          # Pythonバインディング
-├── statelix_py/           # Pythonパッケージ
-│   ├── core/              # コア機能
-│   ├── models/            # 統計モデル
-│   ├── gui/               # GUIコンポーネント
-│   ├── plugins/           # プラグインシステム
-│   └── utils/             # ユーティリティ
-├── tests/                 # テスト
-│   ├── unit/              # ユニットテスト
-│   ├── integration/       # 統合テスト
-│   └── cpp/               # C++テスト
-├── docs/                  # ドキュメント
-├── plugins_wasm/          # Wasmプラグイン
-└── CMakeLists.txt         # CMake設定
+├── src/                    # C++ Core
+│   ├── bindings/          # Python Pybind11 Bindings
+│   ├── graph/             # Louvain, PageRank
+│   ├── causal/            # IV, DID
+│   ├── bayes/             # HMC Sampler
+│   ├── search/            # HNSW Index
+│   └── ...
+├── statelix_py/           # Python Package
+│   ├── core/              # C++ Extension Wrappers
+│   ├── models/            # Sklearn-compatible Models
+│   └── gui/               # PySide6 Application
+├── tests/                 # Unit Tests
+└── setup.py               # Build Script
 ```
 
-## 開発
+## 開発者向け
 
-### テストの実行
-
+### テスト実行
 ```bash
-# Pythonテスト
-pytest tests/ -v --cov=statelix_py
+# ユニットテスト (Python)
+pytest tests/
 
-# C++テスト
-cd build
-ctest --output-on-failure
-```
-
-### コードフォーマット
-
-```bash
-# Python
-black statelix_py/
-flake8 statelix_py/
-
-# C++
-clang-format -i src/**/*.cpp src/**/*.h
-```
-
-### Dockerでの開発
-
-```bash
-docker build -t statelix:dev .
-docker run -it -v $(pwd):/statelix statelix:dev
+# 手動検証スクリプト
+python tests/verify_manual.py
 ```
 
 ## ライセンス
-
-MIT License - 詳細は [LICENSE](LICENSE) を参照
-
-## 技術スタック
-
-- **C++**: Eigen (線形代数), pybind11 (Pythonバインディング)
-- **Python**: NumPy, Pandas, PyArrow
-- **統計**: statsmodels, lifelines
-- **GUI**: PyQt6
-- **可視化**: Matplotlib, Plotly
-- **プラグイン**: Wasmtime
-- **テスト**: pytest, Google Test
-- **CI/CD**: GitHub Actions
-
-## 貢献
-
-プルリクエストを歓迎します！詳細は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
-
-## サポート
-
-- 📖 [ドキュメント](https://statelix.readthedocs.io)
-- 🐛 [Issues](https://github.com/statelix/statelix/issues)
-- 💬 [Discussions](https://github.com/statelix/statelix/discussions)
-
-## ロードマップ
-
-- [x] v2.0: 基本機能（OLS, GUI, ステップログ）
-- [x] v2.1: 高度なモデル（GLM, GLMM）
-- [x] v2.2: プラグインシステム（Wasm）
-- [ ] v2.3: 分散処理サポート
-- [ ] v3.0: クラウド統合、プラグインストア
-
----
-
-© 2025 Statelix Development Team
+MIT License

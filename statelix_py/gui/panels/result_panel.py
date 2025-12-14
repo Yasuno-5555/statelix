@@ -63,8 +63,14 @@ class ResultPanel(QWidget):
         self.setLayout(layout)
 
     def display_result(self, result_data: dict):
-        self.status_label.setText("成功: True")
-        self.status_label.setStyleSheet("color: green; font-weight: bold;")
+        success = result_data.get('success', True)
+        
+        if success:
+            self.status_label.setText("成功: True")
+            self.status_label.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            self.status_label.setText("失敗")
+            self.status_label.setStyleSheet("color: red; font-weight: bold;")
         
         self.r2_label.setText(f"R^2: {result_data.get('r2', 'N/A')}")
         self.mse_label.setText(f"MSE: {result_data.get('mse', 'N/A')}")
@@ -72,4 +78,5 @@ class ResultPanel(QWidget):
         summary = result_data.get('summary', '')
         self.result_text.setText(summary)
         
-        self.log_view.append(f"[INFO] Analysis completed. Hash: {result_data.get('hash', '???')}")
+        log_level = "[INFO]" if success else "[ERROR]"
+        self.log_view.append(f"{log_level} Analysis completed. Hash: {result_data.get('hash', '???')}")

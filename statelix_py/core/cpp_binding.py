@@ -178,10 +178,8 @@ def fit_gbdt(X, y, n_estimators=100, learning_rate=0.1, max_depth=3, subsample=1
     model.learning_rate = learning_rate
     model.max_depth = max_depth
     model.subsample = subsample
-    model.max_depth = max_depth
-    model.subsample = subsample
     model.fit(np.asarray(X, dtype=float), np.asarray(y, dtype=float))
-    return model # Return model to allow predict
+    return model  # Return model to allow predict
 
 def fit_fm(X, y, n_factors=8, max_iter=100, reg_w=0.0, reg_v=0.0, task="Regression"):
     _check_core()
@@ -226,10 +224,6 @@ def minimize_lbfgs(func, x0, max_iter=100, m=10, epsilon=1e-5):
     
     # Run C++ optimization which calls back into Python
     result = solver.minimize(objective, np.asarray(x0, dtype=float))
-    
-    # Run C++ optimization which calls back into Python
-    result = solver.minimize(objective, np.asarray(x0, dtype=float))
-    
     return result
 
 # --- Bayes: MCMC ---

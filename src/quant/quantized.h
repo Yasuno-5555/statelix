@@ -33,7 +33,7 @@ inline QuantizedTensor quantize(const std::vector<float>& input, int rows, int c
     std::vector<int8_t> quantized(input.size());
     for(size_t i = 0; i < input.size(); ++i) {
         int32_t q = static_cast<int32_t>(std::round(input[i] / scale));
-        q = std::max(-128, std::min(127, q));
+        q = std::max<int32_t>(-128, std::min<int32_t>(127, q));
         quantized[i] = static_cast<int8_t>(q);
     }
     
