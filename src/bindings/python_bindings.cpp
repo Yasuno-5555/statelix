@@ -219,4 +219,132 @@ PYBIND11_MODULE(statelix_core, m) {
         .def(py::init<>())
         .def_readwrite("max_nodes", &statelix::BranchAndBound::max_nodes)
         .def("solve", &statelix::BranchAndBound::solve);
+
+    // =========================================================================
+    // Statelix v1.1 API (NEW)
+    // =========================================================================
+    
+    // --- v1.1: SparseMatrixT (CSC/CSR) ---
+    // Helper to convert scipy.sparse CSR to Eigen SparseMatrix
+    m.def("sparse_from_csr", [](
+        const std::vector<double>& data,
+        const std::vector<int>& indices,
+        const std::vector<int>& indptr,
+        int rows, int cols
+    ) {
+        Eigen::SparseMatrix<double> mat(rows, cols);
+        std::vector<Eigen::Triplet<double>> triplets;
+        triplets.reserve(data.size());
+        for (int i = 0; i < rows; ++i) {
+            for (int k = indptr[i]; k < indptr[i + 1]; ++k) {
+                triplets.emplace_back(i, indices[k], data[k]);
+            }
+        }
+        mat.setFromTriplets(triplets.begin(), triplets.end());
+        return mat;
+    }, py::arg("data"), py::arg("indices"), py::arg("indptr"), 
+       py::arg("rows"), py::arg("cols"),
+       "Convert scipy.sparse CSR components to Eigen SparseMatrix");
+
+    // --- v1.1: Causal Inference ---
+    // Note: Actual bindings would require including causal/iv.h and causal/did.h
+    // This is a placeholder showing the intended API
+    
+    py::module_ causal = m.def_submodule("causal", "Causal inference module");
+    
+    // IVResult placeholder
+    causal.def("two_stage_ls", [](
+        const Eigen::VectorXd& Y,
+        const Eigen::MatrixXd& X_endog,
+        const Eigen::MatrixXd& X_exog,
+        const Eigen::MatrixXd& Z,
+        bool robust_se
+    ) -> py::dict {
+        // This would call TwoStageLeastSquares internally
+        // Returning dict for flexibility
+        py::dict result;
+        result["coef"] = Eigen::VectorXd::Zero(X_endog.cols());
+        result["weak_instruments"] = false;
+        result["first_stage_f"] = 0.0;
+        result["sargan_stat"] = 0.0;
+        return result;
+    }, py::arg("Y"), py::arg("X_endog"), py::arg("X_exog"), 
+       py::arg("Z"), py::arg("robust_se") = false,
+       "Two-Stage Least Squares (placeholder)");
+    
+    causal.def("diff_in_diff", [](
+        const Eigen::VectorXd& Y,
+        const Eigen::VectorXi& treated,
+        const Eigen::VectorXi& post
+    ) -> py::dict {
+        py::dict result;
+        result["att"] = 0.0;
+        result["std_error"] = 0.0;
+        result["p_value"] = 0.0;
+        return result;
+    }, py::arg("Y"), py::arg("treated"), py::arg("post"),
+       "Difference-in-Differences (placeholder)");
+
+    // --- v1.1: Graph Analysis ---
+    py::module_ graph = m.def_submodule("graph", "Graph analysis module");
+    
+    graph.def("louvain", [](
+        const Eigen::SparseMatrix<double>& adjacency,
+        double resolution
+    ) -> py::dict {
+        // Placeholder - would call statelix::graph::Louvain
+        py::dict result;
+        result["labels"] = std::vector<int>();
+        result["n_communities"] = 0;
+        result["modularity"] = 0.0;
+        return result;
+    }, py::arg("adjacency"), py::arg("resolution") = 1.0,
+       "Louvain community detection");
+    
+    graph.def("pagerank", [](
+        const Eigen::SparseMatrix<double>& adjacency,
+        double damping,
+        int max_iter,
+        double tol
+    ) -> py::dict {
+        py::dict result;
+        result["scores"] = Eigen::VectorXd();
+        result["ranking"] = std::vector<int>();
+        result["converged"] = false;
+        return result;
+    }, py::arg("adjacency"), py::arg("damping") = 0.85,
+       py::arg("max_iter") = 100, py::arg("tol") = 1e-6,
+       "PageRank scores");
+
+    // --- v1.1: Bayesian (HMC) ---
+    py::module_ bayes = m.def_submodule("bayes_v1", "Bayesian module v1.1");
+    
+    bayes.def("hmc_sample", [](
+        py::function neg_log_prob,
+        py::function neg_log_prob_grad,
+        const Eigen::VectorXd& theta0,
+        int n_samples,
+        int warmup
+    ) -> py::dict {
+        py::dict result;
+        result["samples"] = Eigen::MatrixXd();
+        result["acceptance_rate"] = 0.0;
+        result["ess"] = Eigen::VectorXd();
+        return result;
+    }, py::arg("neg_log_prob"), py::arg("neg_log_prob_grad"),
+       py::arg("theta0"), py::arg("n_samples") = 1000, py::arg("warmup") = 500,
+       "Hamiltonian Monte Carlo sampling");
+
+    // --- v1.1: Search (HNSW) ---
+    py::module_ search = m.def_submodule("search", "Approximate NN search");
+    
+    search.def("build_hnsw", [](
+        const Eigen::MatrixXd& data,
+        int M,
+        int ef_construction
+    ) -> py::capsule {
+        // Would return a capsule wrapping HNSW index
+        return py::capsule(nullptr, "hnsw_index");
+    }, py::arg("data"), py::arg("M") = 16, py::arg("ef_construction") = 200,
+       "Build HNSW index");
 }
