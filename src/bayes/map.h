@@ -29,6 +29,10 @@
 #include "../optimization/penalizer.h"
 #include "../optimization/lbfgs.h"
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 namespace statelix {
 
 // =============================================================================
@@ -499,9 +503,5 @@ inline MAPResult mle(
 }
 
 } // namespace statelix
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 
 #endif // STATELIX_MAP_H

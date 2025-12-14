@@ -1,15 +1,10 @@
 #include <Eigen/Dense>
-#include <pybind11/pybind11.h>
-#include <pybind11/eigen.h>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include "../glm/glm_models.h"
 
-struct LogisticResult {
-    Eigen::VectorXd coef;
-    int iterations;
-    bool converged;
-};
+namespace statelix {
 
 inline double sigmoid(double z) {
     if (z >= 0) {
@@ -21,11 +16,9 @@ inline double sigmoid(double z) {
     }
 }
 
-LogisticResult fit_logistic(
+LogisticResult LogisticRegression::fit(
     const Eigen::MatrixXd& X,
-    const Eigen::VectorXd& y,
-    int max_iter = 50,
-    double tol = 1e-6
+    const Eigen::VectorXd& y
 ) {
     int n = X.rows();
     int p = X.cols();
@@ -72,17 +65,16 @@ LogisticResult fit_logistic(
     return result;
 }
 
-namespace py = pybind11;
-
-PYBIND11_MODULE(statelix_logistic, m) {
-    py::class_<LogisticResult>(m, "LogisticResult")
-        .def_readonly("coef", &LogisticResult::coef)
-        .def_readonly("iterations", &LogisticResult::iterations)
-        .def_readonly("converged", &LogisticResult::converged);
-
-    m.def("fit_logistic", &fit_logistic,
-          "Fit logistic regression using IRLS",
-          py::arg("X"), py::arg("y"),
-          py::arg("max_iter") = 50,
-          py::arg("tol") = 1e-6);
+Eigen::VectorXd LogisticRegression::predict_prob(
+    const Eigen::MatrixXd& X,
+    const Eigen::VectorXd& coef
+) {
+    Eigen::VectorXd eta = X * coef;
+    Eigen::VectorXd probs(eta.size());
+    for (int i = 0; i < eta.size(); ++i) {
+        probs(i) = sigmoid(eta(i));
+    }
+    return probs;
 }
+
+} // namespace statelix

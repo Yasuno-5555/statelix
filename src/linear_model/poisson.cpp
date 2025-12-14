@@ -1,6 +1,4 @@
 #include <Eigen/Dense>
-#include <pybind11/pybind11.h>
-#include <pybind11/eigen.h>
 #include <cmath>
 #include <algorithm>
 #include <limits>
@@ -9,6 +7,7 @@ using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
 namespace statelix {
+namespace poisson_detail {
 
 // Poisson回帰の結果構造体
 struct PoissonResult {
@@ -312,52 +311,6 @@ VectorXd predict_poisson(
     }
 }
 
+} // namespace poisson_detail
 } // namespace statelix
 
-// Python bindings
-namespace py = pybind11;
-
-PYBIND11_MODULE(statelix_poisson, m) {
-    m.doc() = "Poisson regression (GLM with log link) module";
-    
-    // PoissonResult構造体のバインディング
-    py::class_<statelix::PoissonResult>(m, "PoissonResult")
-        .def_readonly("coef", &statelix::PoissonResult::coef, "Regression coefficients")
-        .def_readonly("intercept", &statelix::PoissonResult::intercept, "Intercept term")
-        .def_readonly("std_errors", &statelix::PoissonResult::std_errors, "Standard errors")
-        .def_readonly("z_values", &statelix::PoissonResult::z_values, "z-statistics")
-        .def_readonly("p_values", &statelix::PoissonResult::p_values, "p-values")
-        .def_readonly("conf_int", &statelix::PoissonResult::conf_int, "Confidence intervals")
-        .def_readonly("fitted_values", &statelix::PoissonResult::fitted_values, "Fitted values (counts)")
-        .def_readonly("linear_predictors", &statelix::PoissonResult::linear_predictors, "Linear predictors (log scale)")
-        .def_readonly("deviance_residuals", &statelix::PoissonResult::deviance_residuals, "Deviance residuals")
-        .def_readonly("pearson_residuals", &statelix::PoissonResult::pearson_residuals, "Pearson residuals")
-        .def_readonly("log_likelihood", &statelix::PoissonResult::log_likelihood, "Log-likelihood")
-        .def_readonly("deviance", &statelix::PoissonResult::deviance, "Deviance")
-        .def_readonly("null_deviance", &statelix::PoissonResult::null_deviance, "Null deviance")
-        .def_readonly("aic", &statelix::PoissonResult::aic, "AIC")
-        .def_readonly("bic", &statelix::PoissonResult::bic, "BIC")
-        .def_readonly("pseudo_r_squared", &statelix::PoissonResult::pseudo_r_squared, "Pseudo R-squared (McFadden)")
-        .def_readonly("vcov", &statelix::PoissonResult::vcov, "Variance-covariance matrix")
-        .def_readonly("iterations", &statelix::PoissonResult::iterations, "Number of iterations")
-        .def_readonly("converged", &statelix::PoissonResult::converged, "Convergence flag")
-        .def_readonly("n_obs", &statelix::PoissonResult::n_obs, "Number of observations")
-        .def_readonly("n_params", &statelix::PoissonResult::n_params, "Number of parameters");
-    
-    // 関数のバインディング
-    m.def("fit_poisson", &statelix::fit_poisson,
-          "Fit Poisson regression using IRLS",
-          py::arg("X"), py::arg("y"),
-          py::arg("fit_intercept") = true,
-          py::arg("offset") = VectorXd(),
-          py::arg("max_iter") = 50,
-          py::arg("tol") = 1e-8,
-          py::arg("conf_level") = 0.95);
-    
-    m.def("predict_poisson", &statelix::predict_poisson,
-          "Make predictions using fitted Poisson model",
-          py::arg("result"), py::arg("X_new"),
-          py::arg("fit_intercept") = true,
-          py::arg("offset") = VectorXd(),
-          py::arg("return_log") = false);
-}

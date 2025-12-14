@@ -155,7 +155,7 @@ void GradientBoostingRegressor::fit(const Eigen::MatrixXd& X, const Eigen::Vecto
     std::vector<int> indices(n_samples);
     std::iota(indices.begin(), indices.end(), 0);
     // Random engine
-    std::srand(42); // Seed for reproducibility
+    std::mt19937 rng(42); // Seed for reproducibility
 
     for (int i = 0; i < n_estimators; ++i) {
         // Residuals r_i = y_i - F(x_i)
@@ -166,7 +166,7 @@ void GradientBoostingRegressor::fit(const Eigen::MatrixXd& X, const Eigen::Vecto
         Eigen::VectorXd res_train;
         
         if (subsample < 1.0) {
-            std::random_shuffle(indices.begin(), indices.end());
+            std::shuffle(indices.begin(), indices.end(), rng);
             int n_sub = std::max(1, (int)(n_samples * subsample));
             
             X_train.resize(n_sub, X.cols());

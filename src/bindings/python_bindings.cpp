@@ -247,12 +247,10 @@ PYBIND11_MODULE(statelix_core, m) {
        "Convert scipy.sparse CSR components to Eigen SparseMatrix");
 
     // --- v1.1: Causal Inference ---
-    // Note: Actual bindings would require including causal/iv.h and causal/did.h
-    // This is a placeholder showing the intended API
+    // TODO: Integrate with causal/iv.h and causal/did.h
     
     py::module_ causal = m.def_submodule("causal", "Causal inference module");
     
-    // IVResult placeholder
     causal.def("two_stage_ls", [](
         const Eigen::VectorXd& Y,
         const Eigen::MatrixXd& X_endog,
@@ -260,46 +258,35 @@ PYBIND11_MODULE(statelix_core, m) {
         const Eigen::MatrixXd& Z,
         bool robust_se
     ) -> py::dict {
-        // This would call TwoStageLeastSquares internally
-        // Returning dict for flexibility
-        py::dict result;
-        result["coef"] = Eigen::VectorXd::Zero(X_endog.cols());
-        result["weak_instruments"] = false;
-        result["first_stage_f"] = 0.0;
-        result["sargan_stat"] = 0.0;
-        return result;
+        (void)Y; (void)X_endog; (void)X_exog; (void)Z; (void)robust_se;
+        throw std::runtime_error("two_stage_ls: Not implemented in Python bindings. Use C++ API directly.");
     }, py::arg("Y"), py::arg("X_endog"), py::arg("X_exog"), 
        py::arg("Z"), py::arg("robust_se") = false,
-       "Two-Stage Least Squares (placeholder)");
+       "Two-Stage Least Squares (not yet implemented)");
     
     causal.def("diff_in_diff", [](
         const Eigen::VectorXd& Y,
         const Eigen::VectorXi& treated,
         const Eigen::VectorXi& post
     ) -> py::dict {
-        py::dict result;
-        result["att"] = 0.0;
-        result["std_error"] = 0.0;
-        result["p_value"] = 0.0;
-        return result;
+        (void)Y; (void)treated; (void)post;
+        throw std::runtime_error("diff_in_diff: Not implemented in Python bindings. Use C++ API directly.");
     }, py::arg("Y"), py::arg("treated"), py::arg("post"),
-       "Difference-in-Differences (placeholder)");
+       "Difference-in-Differences (not yet implemented)");
 
     // --- v1.1: Graph Analysis ---
+    // TODO: These are placeholders for future implementation.
+    // See graph/louvain.h and graph/pagerank.h for the C++ implementations.
     py::module_ graph = m.def_submodule("graph", "Graph analysis module");
     
     graph.def("louvain", [](
         const Eigen::SparseMatrix<double>& adjacency,
         double resolution
     ) -> py::dict {
-        // Placeholder - would call statelix::graph::Louvain
-        py::dict result;
-        result["labels"] = std::vector<int>();
-        result["n_communities"] = 0;
-        result["modularity"] = 0.0;
-        return result;
+        (void)adjacency; (void)resolution;
+        throw std::runtime_error("louvain: Not implemented in Python bindings. Use C++ API directly.");
     }, py::arg("adjacency"), py::arg("resolution") = 1.0,
-       "Louvain community detection");
+       "Louvain community detection (not yet implemented)");
     
     graph.def("pagerank", [](
         const Eigen::SparseMatrix<double>& adjacency,
@@ -307,16 +294,14 @@ PYBIND11_MODULE(statelix_core, m) {
         int max_iter,
         double tol
     ) -> py::dict {
-        py::dict result;
-        result["scores"] = Eigen::VectorXd();
-        result["ranking"] = std::vector<int>();
-        result["converged"] = false;
-        return result;
+        (void)adjacency; (void)damping; (void)max_iter; (void)tol;
+        throw std::runtime_error("pagerank: Not implemented in Python bindings. Use C++ API directly.");
     }, py::arg("adjacency"), py::arg("damping") = 0.85,
        py::arg("max_iter") = 100, py::arg("tol") = 1e-6,
-       "PageRank scores");
+       "PageRank scores (not yet implemented)");
 
     // --- v1.1: Bayesian (HMC) ---
+    // TODO: Integrate with bayes/hmc.h
     py::module_ bayes = m.def_submodule("bayes_v1", "Bayesian module v1.1");
     
     bayes.def("hmc_sample", [](
@@ -326,16 +311,14 @@ PYBIND11_MODULE(statelix_core, m) {
         int n_samples,
         int warmup
     ) -> py::dict {
-        py::dict result;
-        result["samples"] = Eigen::MatrixXd();
-        result["acceptance_rate"] = 0.0;
-        result["ess"] = Eigen::VectorXd();
-        return result;
+        (void)neg_log_prob; (void)neg_log_prob_grad; (void)theta0; (void)n_samples; (void)warmup;
+        throw std::runtime_error("hmc_sample: Not implemented in Python bindings. Use C++ API directly.");
     }, py::arg("neg_log_prob"), py::arg("neg_log_prob_grad"),
        py::arg("theta0"), py::arg("n_samples") = 1000, py::arg("warmup") = 500,
-       "Hamiltonian Monte Carlo sampling");
+       "Hamiltonian Monte Carlo sampling (not yet implemented)");
 
     // --- v1.1: Search (HNSW) ---
+    // TODO: Integrate with search/hnsw.h
     py::module_ search = m.def_submodule("search", "Approximate NN search");
     
     search.def("build_hnsw", [](
@@ -343,8 +326,9 @@ PYBIND11_MODULE(statelix_core, m) {
         int M,
         int ef_construction
     ) -> py::capsule {
-        // Would return a capsule wrapping HNSW index
-        return py::capsule(nullptr, "hnsw_index");
+        (void)data; (void)M; (void)ef_construction;
+        throw std::runtime_error("build_hnsw: Not implemented in Python bindings. Use C++ API directly.");
     }, py::arg("data"), py::arg("M") = 16, py::arg("ef_construction") = 200,
-       "Build HNSW index");
+       "Build HNSW index (not yet implemented)");
 }
+
