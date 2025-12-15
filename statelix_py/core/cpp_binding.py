@@ -2,28 +2,38 @@ import numpy as np
 import sys
 import os
 
-# Try to import the compiled C++ module
-# It is expected to be in the parent directory or installed in site-packages
 try:
     from .. import statelix_core as _core
 except ImportError:
     try:
         import statelix_core as _core
-    except ImportError:
-        _core = None
-        print("Warning: statelix_core C++ module not found. Some features will be unavailable.")
+    except ImportError as e:
+        raise ImportError(
+            "CRITICAL: Could not import 'statelix_core' C++ module. "
+            "Please ensure the C++ extension is compiled and installed correctly. "
+            "Refer to the documentation for build instructions."
+        ) from e
 
 def _check_core():
-    if _core is None:
-        raise ImportError("statelix_core module is not loaded. Please build the C++ extension.")
+    # Helper to satisfy legacy calls, though import strictly enforces _core presence now.
+    pass
 
 # --- OLS ---
 def fit_ols(X, y, fit_intercept=True, conf_level=0.95):
     """
-    Fit Ordinary Least Squares model.
+    Fit Ordinary Least Squares (OLS) model.
+
+    Args:
+        X (np.ndarray): Design matrix of shape (n_samples, n_features).
+        y (np.ndarray): Target vector of shape (n_samples,).
+        fit_intercept (bool): Whether to calculate the intercept for this model.
+        conf_level (float): Confidence level for interval calculation (0.0 to 1.0).
+
+    Returns:
+        OLSResult: A result object containing coefficients and statistics.
     """
     _check_core()
-    return _core.fit_ols_full(np.asarray(X), np.asarray(y), fit_intercept, conf_level)
+    return _core.fit_ols_full(np.asarray(X, dtype=np.float64), np.asarray(y, dtype=np.float64), fit_intercept, conf_level)
 
 def predict_ols(result, X_new, fit_intercept=True):
     """
@@ -67,32 +77,125 @@ def fit_ar(series, p):
 
 
 # --- GLM Models ---
-def fit_logistic(X, y, max_iter=50):
+def fit_logistic(X, y, max_iter=50, tol=1e-4, initial_params=None):
+    """
+    Fit Logistic Regression (GLM).
+
+    Args:
+        X (np.ndarray): Input features (n_samples, n_features).
+        y (np.ndarray): Target values (n_samples,) in [0, 1].
+        max_iter (int): Maximum number of iterations.
+        tol (float): Convergence tolerance.
+        initial_params (np.ndarray, optional): Initial weights (n_features + 1,).
+
+    Returns:
+        LogisticRegression: Fitted model.
+    """
     _check_core()
     model = _core.LogisticRegression()
     model.max_iter = max_iter
-    return model.fit(np.asarray(X), np.asarray(y))
+    model.tol = tol
+    X_arr = np.asarray(X, dtype=np.float64)
+    y_arr = np.asarray(y, dtype=np.float64)
+    if initial_params is not None:
+        return model.fit(X_arr, y_arr, np.asarray(initial_params, dtype=np.float64))
+    return model.fit(X_arr, y_arr)
 
-def fit_poisson(X, y, max_iter=50):
+def fit_poisson(X, y, max_iter=50, tol=1e-4, initial_params=None):
+    """
+    Fit Poisson Regression (GLM).
+
+    Args:
+        X (np.ndarray): Input features (n_samples, n_features).
+        y (np.ndarray): Target counts (n_samples,).
+        max_iter (int): Maximum iterations.
+        tol (float): Tolerance for convergence.
+        initial_params (np.ndarray, optional): Initial weights.
+
+    Returns:
+        PoissonRegression: Fitted model.
+    """
     _check_core()
     model = _core.PoissonRegression()
     model.max_iter = max_iter
-    return model.fit(np.asarray(X), np.asarray(y))
+    model.tol = tol
+    X_arr = np.asarray(X, dtype=np.float64)
+    y_arr = np.asarray(y, dtype=np.float64)
+    if initial_params is not None:
+        return model.fit(X_arr, y_arr, np.asarray(initial_params, dtype=np.float64))
+    return model.fit(X_arr, y_arr)
 
-def fit_negbin(X, y):
+def fit_negbin(X, y, max_iter=50, tol=1e-4, initial_params=None):
+    """
+    Fit Negative Binomial Regression (GLM).
+
+    Args:
+        X (np.ndarray): Input features (n_samples, n_features).
+        y (np.ndarray): Target counts (n_samples,).
+        max_iter (int): Maximum iterations.
+        tol (float): Convergence tolerance.
+        initial_params (np.ndarray, optional): Initial weights.
+
+    Returns:
+        NegBinRegression: Fitted model.
+    """
     _check_core()
     model = _core.NegBinRegression()
-    return model.fit(np.asarray(X), np.asarray(y))
+    model.max_iter = max_iter
+    model.tol = tol
+    X_arr = np.asarray(X, dtype=np.float64)
+    y_arr = np.asarray(y, dtype=np.float64)
+    if initial_params is not None:
+        return model.fit(X_arr, y_arr, np.asarray(initial_params, dtype=np.float64))
+    return model.fit(X_arr, y_arr)
 
-def fit_gamma(X, y):
+def fit_gamma(X, y, max_iter=50, tol=1e-4, initial_params=None):
+    """
+    Fit Gamma Regression (GLM).
+
+    Args:
+        X (np.ndarray): Input features.
+        y (np.ndarray): Target values (positive).
+        max_iter (int): Maximum iterations.
+        tol (float): Convergence tolerance.
+        initial_params (np.ndarray, optional): Initial weights.
+
+    Returns:
+        GammaRegression: Fitted model.
+    """
     _check_core()
     model = _core.GammaRegression()
-    return model.fit(np.asarray(X), np.asarray(y))
+    model.max_iter = max_iter
+    model.tol = tol
+    X_arr = np.asarray(X, dtype=np.float64)
+    y_arr = np.asarray(y, dtype=np.float64)
+    if initial_params is not None:
+        return model.fit(X_arr, y_arr, np.asarray(initial_params, dtype=np.float64))
+    return model.fit(X_arr, y_arr)
 
-def fit_probit(X, y):
+def fit_probit(X, y, max_iter=50, tol=1e-4, initial_params=None):
+    """
+    Fit Probit Regression (GLM).
+
+    Args:
+        X (np.ndarray): Input features.
+        y (np.ndarray): Target labels (0/1).
+        max_iter (int): Maximum iterations.
+        tol (float): Convergence tolerance.
+        initial_params (np.ndarray, optional): Initial weights.
+
+    Returns:
+        ProbitRegression: Fitted model.
+    """
     _check_core()
     model = _core.ProbitRegression()
-    return model.fit(np.asarray(X), np.asarray(y))
+    model.max_iter = max_iter
+    model.tol = tol
+    X_arr = np.asarray(X, dtype=np.float64)
+    y_arr = np.asarray(y, dtype=np.float64)
+    if initial_params is not None:
+        return model.fit(X_arr, y_arr, np.asarray(initial_params, dtype=np.float64))
+    return model.fit(X_arr, y_arr)
 
 # --- Regularized ---
 def fit_ridge(X, y, alpha=1.0):
@@ -133,23 +236,43 @@ class KDTree:
 
 # --- State Space ---
 class KalmanFilter:
+    """
+    Wrapper for C++ KalmanFilter.
+    Proxies all attribute access to the underlying C++ object.
+    
+    Args:
+        state_dim (int): Dimension of state vector.
+        measure_dim (int): Dimension of measurement vector.
+    """
     def __init__(self, state_dim, measure_dim):
         _check_core()
-        self.model = _core.KalmanFilter(state_dim, measure_dim)
+        self._model = _core.KalmanFilter(state_dim, measure_dim)
         
+    def __getattr__(self, name):
+        # Proxy to C++ model
+        return getattr(self._model, name)
+    
+    def __setattr__(self, name, value):
+        if name == "_model":
+            super().__setattr__(name, value)
+        else:
+            setattr(self._model, name, value)
+
     def filter(self, measurements):
-        # We need to expose matrix setters for F, H, Q, R etc. 
-        # For now, we assume user sets them via property access which pybind11 exposes directly on the inner model.
-        # But this wrapper is shielding the inner model.
-        # Let's Expose the inner model directly or proxy attributes.
-        pass
-        # Better: Return the inner model directly in a factory? 
-        # Or Just use the inner model directly from statelix_core in user code.
-        # But here we are unifying.
+        """
+        Run filtering on measurements.
+
+        Args:
+            measurements (np.ndarray): Array of shape (n_timesteps, measure_dim).
         
-    # Simplified wrapper access to inner C++ object attributes is tricky without __getattr__
+        Returns:
+            np.ndarray: Estimated states (n_timesteps, state_dim).
+        """
+        return self._model.filter(np.asarray(measurements, dtype=np.float64))
+
     def get_model(self):
-        return self.model
+        """Returns the raw C++ object."""
+        return self._model
 
 # --- Spatial ---
 def align_icp(source, target, max_iter=50):
@@ -172,14 +295,38 @@ def inverse_wavelet_transform(coeffs, n_original):
 
 # --- ML ---
 def fit_gbdt(X, y, n_estimators=100, learning_rate=0.1, max_depth=3, subsample=1.0):
+    """
+    Fit GBDT Regressor.
+
+    Args:
+        X (np.ndarray): (n_samples, n_features).
+        y (np.ndarray): (n_samples,) continuous targets.
+    """
     _check_core()
     model = _core.GradientBoostingRegressor()
     model.n_estimators = n_estimators
     model.learning_rate = learning_rate
     model.max_depth = max_depth
     model.subsample = subsample
-    model.fit(np.asarray(X, dtype=float), np.asarray(y, dtype=float))
-    return model  # Return model to allow predict
+    model.fit(np.asarray(X, dtype=np.float64), np.asarray(y, dtype=np.float64))
+    return model
+
+def fit_gbdt_classifier(X, y, n_estimators=100, learning_rate=0.1, max_depth=3, subsample=1.0):
+    """
+    Fit GBDT Classifier.
+
+    Args:
+        X (np.ndarray): (n_samples, n_features).
+        y (np.ndarray): (n_samples,) labels.
+    """
+    _check_core()
+    model = _core.GradientBoostingClassifier()
+    model.n_estimators = n_estimators
+    model.learning_rate = learning_rate
+    model.max_depth = max_depth
+    model.subsample = subsample
+    model.fit(np.asarray(X, dtype=np.float64), np.asarray(y, dtype=np.float64))
+    return model
 
 def fit_fm(X, y, n_factors=8, max_iter=100, reg_w=0.0, reg_v=0.0, task="Regression"):
     _check_core()
