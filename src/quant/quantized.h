@@ -22,8 +22,9 @@ struct QuantizedTensor {
 
 // Quantize float to int8
 inline QuantizedTensor quantize(const std::vector<float>& input, int rows, int cols) {
-    float min_val = *std::min_element(input.begin(), input.end());
-    float max_val = *std::max_element(input.begin(), input.end());
+    auto [min_it, max_it] = std::minmax_element(input.begin(), input.end());
+    float min_val = *min_it;
+    float max_val = *max_it;
     
     // Symmetric quantization for simplicity
     float abs_max = std::max(std::abs(min_val), std::abs(max_val));
@@ -49,45 +50,62 @@ inline std::vector<float> dequantize(const QuantizedTensor& tensor) {
     return output;
 }
 
-// INT8 Matrix Multiplication: C = A * B
-// A: (M x K), B: (K x N), C: (M x N)
-// Uses int32 accumulator to prevent overflow
-inline std::vector<float> quantized_matmul(
+// INT8 Matrix Multiplication with Bias: C = A * B + bias
+// bias is float vector of size (N) or (1)
+inline std::vector<float> quantized_matmul_bias(
     const QuantizedTensor& A, 
     const QuantizedTensor& B,
-    float output_scale = 0.0f // If 0, auto-calculate
+    const std::vector<float>& bias,
+    float output_scale = 0.0f 
 ) {
     int M = A.rows;
     int K = A.cols;
     int N = B.cols;
     
     if (A.cols != B.rows) {
-        throw std::runtime_error("Dimension mismatch in quantized_matmul");
+        throw std::runtime_error("Dimension mismatch: A.cols != B.rows");
+    }
+    if (A.data.size() != static_cast<size_t>(M * K) || B.data.size() != static_cast<size_t>(K * N)) {
+        throw std::runtime_error("Data buffer size mismatch");
+    }
+    if (!bias.empty() && bias.size() != static_cast<size_t>(N) && bias.size() != 1) {
+         throw std::runtime_error("Bias dimension mismatch");
     }
     
-    // Output scale = scale_A * scale_B
     float scale_out = A.params.scale * B.params.scale;
     if (output_scale > 0) scale_out = output_scale;
     
     std::vector<float> C(M * N, 0.0f);
     
     // Core int8 matmul with int32 accumulator
+    // Optimization: Loop tiling or SIMD would be here in prod
     for(int i = 0; i < M; ++i) {
         for(int j = 0; j < N; ++j) {
             int32_t acc = 0;
             for(int k = 0; k < K; ++k) {
-                // A is row-major: A[i, k] = A.data[i * K + k]
-                // B is row-major: B[k, j] = B.data[k * N + j]
                 int32_t a_val = static_cast<int32_t>(A.data[i * K + k]);
                 int32_t b_val = static_cast<int32_t>(B.data[k * N + j]);
                 acc += a_val * b_val;
             }
-            // Dequantize accumulator
-            C[i * N + j] = static_cast<float>(acc) * scale_out;
+            
+            float val = static_cast<float>(acc) * scale_out;
+            
+            if (!bias.empty()) {
+                val += (bias.size() == 1) ? bias[0] : bias[j];
+            }
+            C[i * N + j] = val;
         }
     }
-    
     return C;
+}
+
+// Deprecated: Wrapper for backward compatibility
+inline std::vector<float> quantized_matmul(
+    const QuantizedTensor& A, 
+    const QuantizedTensor& B,
+    float output_scale = 0.0f 
+) {
+    return quantized_matmul_bias(A, B, {}, output_scale);
 }
 
 } // namespace statelix

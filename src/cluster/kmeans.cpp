@@ -12,8 +12,8 @@ KMeansResult fit_kmeans(
     double tol,
     int random_state
 ) {
-    int n_samples = X.rows();
-    int n_features = X.cols();
+    const int n_samples = static_cast<int>(X.rows());
+    const int n_features = static_cast<int>(X.cols());
 
     if (n_samples < k) {
         throw std::invalid_argument("n_samples must be >= k");
@@ -21,49 +21,59 @@ KMeansResult fit_kmeans(
 
     // Random initialization of centroids (Randomly pick k samples)
     Eigen::MatrixXd centroids(k, n_features);
-    std::mt19937 gen(random_state);
-    std::uniform_int_distribution<> dis(0, n_samples - 1);
+    std::mt19937 gen(static_cast<unsigned int>(random_state));
+    std::uniform_int_distribution<> sample_dis(0, n_samples - 1);
 
     std::vector<int> indices;
-    while (indices.size() < (size_t)k) {
-        int idx = dis(gen);
+    indices.reserve(k);
+    while (static_cast<int>(indices.size()) < k) {
+        int idx = sample_dis(gen);
         bool found = false;
-        for (int i : indices) if (i == idx) found = true;
+        for (int i : indices) {
+            if (i == idx) {
+                found = true;
+                break;
+            }
+        }
         if (!found) {
             indices.push_back(idx);
-            centroids.row(indices.size() - 1) = X.row(idx);
+            centroids.row(static_cast<int>(indices.size()) - 1) = X.row(idx);
         }
     }
 
     Eigen::VectorXi labels(n_samples);
     double inertia = 0.0;
     int iter = 0;
+    bool converged = false;
+
+    // Precompute squared norms of data points for efficient distance calculation
+    // ||x - c||² = ||x||² - 2*x·c + ||c||²
+    Eigen::VectorXd X_sq_norms = X.rowwise().squaredNorm();
 
     for (; iter < max_iter; ++iter) {
-        // Assignment step
-        bool changed = false;
-        double current_inertia = 0.0;
+        // ========== VECTORIZED ASSIGNMENT STEP ==========
+        // Compute all pairwise squared distances: dists(i, j) = ||X[i] - centroids[j]||²
+        // Using: ||x - c||² = ||x||² + ||c||² - 2*x·c
         
-        // Temporarily store old centroids to check convergence
-        Eigen::MatrixXd old_centroids = centroids;
+        Eigen::VectorXd centroid_sq_norms = centroids.rowwise().squaredNorm();
+        
+        // X * centroids^T gives (n_samples x k) matrix of dot products
+        Eigen::MatrixXd dot_products = X * centroids.transpose();
+        
+        // dists(i, j) = X_sq_norms(i) + centroid_sq_norms(j) - 2 * dot_products(i, j)
+        Eigen::MatrixXd dists = (-2.0 * dot_products).rowwise() + centroid_sq_norms.transpose();
+        dists.colwise() += X_sq_norms;
 
-        // Assign labels
+        // Find argmin for each row and compute inertia
+        double current_inertia = 0.0;
         for (int i = 0; i < n_samples; ++i) {
-            double min_dist = std::numeric_limits<double>::max();
-            int best_cluster = 0;
-
-            for (int j = 0; j < k; ++j) {
-                double dist = (X.row(i) - centroids.row(j)).squaredNorm();
-                if (dist < min_dist) {
-                    min_dist = dist;
-                    best_cluster = j;
-                }
-            }
-            labels(i) = best_cluster;
+            Eigen::Index min_idx;
+            double min_dist = dists.row(i).minCoeff(&min_idx);
+            labels(i) = static_cast<int>(min_idx);
             current_inertia += min_dist;
         }
 
-        // Update step
+        // ========== UPDATE STEP ==========
         Eigen::MatrixXd new_centroids = Eigen::MatrixXd::Zero(k, n_features);
         Eigen::VectorXd counts = Eigen::VectorXd::Zero(k);
 
@@ -77,28 +87,25 @@ KMeansResult fit_kmeans(
                 new_centroids.row(j) /= counts(j);
             } else {
                 // Handle empty cluster: Re-initialize to a random sample
-                // to prevent getting stuck with a dead centroid.
-                std::uniform_int_distribution<> dis(0, n_samples - 1);
-                int random_idx = dis(gen);
+                int random_idx = sample_dis(gen);
                 new_centroids.row(j) = X.row(random_idx);
             }
         }
 
+        // Check convergence: sum of squared centroid shifts
         double shift = (new_centroids - centroids).squaredNorm();
         centroids = new_centroids;
         inertia = current_inertia;
 
         if (shift < tol) {
+            converged = true;
+            ++iter;  // Count this iteration
             break;
         }
     }
 
-    if (iter == max_iter) {
-        // Warning: Did not converge
-        // In C++, we just return what we have, but could log/warn.
-    }
-
-    return {centroids, labels, inertia, iter};
+    return {centroids, labels, inertia, iter, converged};
 }
 
 } // namespace statelix
+

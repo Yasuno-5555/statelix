@@ -56,7 +56,21 @@ public:
         }
     };
     
-    HuberResult fit(const Eigen::MatrixXd& X, const Eigen::VectorXd& y) {
+    bool fit_intercept = true;
+
+    HuberResult fit(const Eigen::MatrixXd& X_in, const Eigen::VectorXd& y) {
+        int n = X_in.rows();
+        int p_in = X_in.cols();
+        
+        Eigen::MatrixXd X;
+        if (fit_intercept) {
+            X.resize(n, p_in + 1);
+            X.rightCols(p_in) = X_in;
+            X.col(0).setOnes();
+        } else {
+            X = X_in;
+        }
+        
         int p = X.cols();
         Eigen::VectorXd beta0 = Eigen::VectorXd::Zero(p);
         

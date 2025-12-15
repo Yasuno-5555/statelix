@@ -1,7 +1,6 @@
 #include "ols.h"
 #include <Eigen/Dense>
-#include <pybind11/pybind11.h>
-#include <pybind11/eigen.h>
+
 #include <cmath>
 #include <algorithm>
 
@@ -19,17 +18,43 @@ double t_cdf_approx(double t, int df) {
     return 0.5 * (1.0 + std::erf(z / std::sqrt(2.0)));
 }
 
-// F分布のp値計算（簡易実装）
+// F分布のp値計算（正確な実装：不完全ベータ関数使用）
+namespace {
+    // Continued fraction for beta function
+    double beta_cf(double a, double b, double x) {
+        double am = 1, bm = 1, az = 1;
+        double qab = a + b, qap = a + 1, qam = a - 1;
+        double bz = 1.0 - qab * x / qap;
+        for (int m = 1; m <= 100; ++m) {
+            double em = m;
+            double d = em * (b - m) * x / ((qam + 2*em) * (a + 2*em));
+            double ap = az + d * am, bp = bz + d * bm;
+            d = -(a + em) * (qab + em) * x / ((a + 2*em) * (qap + 2*em));
+            double app = ap + d * az, bpp = bp + d * bz;
+            double aold = az;
+            am = ap / bpp; bm = bp / bpp; az = app / bpp; bz = 1.0;
+            if (std::abs(az - aold) < 1e-10 * std::abs(az)) break;
+        }
+        return az;
+    }
+
+    // Regularized Incomplete Beta Function Ix(a, b)
+    double beta_inc(double a, double b, double x) {
+        if (x <= 0) return 0.0;
+        if (x >= 1) return 1.0;
+        double bt = std::exp(std::lgamma(a + b) - std::lgamma(a) - std::lgamma(b) +
+                            a * std::log(x) + b * std::log(1.0 - x));
+        if (x < (a + 1.0) / (a + b + 2.0)) return bt * beta_cf(a, b, x) / a;
+        return 1.0 - bt * beta_cf(b, a, 1.0 - x) / b;
+    }
+}
+
 double f_pvalue_approx(double f_stat, int df1, int df2) {
     if (f_stat <= 0.0) return 1.0;
-    // 簡易実装：大きなF値の場合は0に近い
-    if (f_stat > 100.0) return 0.0;
-    // 中程度のF値の場合は経験的な近似
-    double x = df2 / (df2 + df1 * f_stat);
-    // ベータ分布の近似（簡易版）
-    if (x > 0.95) return std::pow(1.0 - x, df2 / 2.0);
-    if (x < 0.05) return 1.0 - std::pow(x, df1 / 2.0);
-    return 0.5; // 中間値の粗い近似
+    // F(d1, d2) cumulative distribution = I_x(d1/2, d2/2) where x = d1*F / (d1*F + d2)
+    double x = (double(df1) * f_stat) / (double(df1) * f_stat + double(df2));
+    // p-value = 1 - CDF
+    return 1.0 - beta_inc(df1 / 2.0, df2 / 2.0, x); 
 }
 
 // 基本的なOLS（既存の実装を維持しつつ堅牢化）

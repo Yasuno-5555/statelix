@@ -7,11 +7,19 @@
 namespace statelix {
 namespace optimization {
 
-    // Soft Thresholding Operator
-    // S(z, gamma) = sign(z) * max(|z| - gamma, 0)
+    /**
+     * @brief Soft Thresholding Operator
+     * S(z, gamma) = sign(z) * max(|z| - gamma, 0)
+     * 
+     * Efficient implementation avoiding unnecessary abs() calls.
+     * Defensive against negative gamma.
+     */
     inline double soft_threshold(double z, double gamma) {
-        if (z > 0 && gamma < std::abs(z)) return z - gamma;
-        if (z < 0 && gamma < std::abs(z)) return z + gamma;
+        double g = std::max(0.0, gamma);
+        if (g == 0.0) return z;
+        
+        if (z > g) return z - g;
+        if (z < -g) return z + g;
         return 0.0;
     }
 

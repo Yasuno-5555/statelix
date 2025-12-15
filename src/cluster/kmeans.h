@@ -9,6 +9,7 @@ struct KMeansResult {
     Eigen::VectorXi labels;
     double inertia;
     int n_iter;
+    bool converged;  ///< True if converged before max_iter
 };
 
 // K-Means clustering using Lloyd's algorithm

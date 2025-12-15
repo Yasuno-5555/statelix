@@ -48,7 +48,7 @@ struct IVResult {
     Eigen::MatrixXd conf_int;       // (p, 2) for [lower, upper]
     
     // First-stage diagnostics
-    Eigen::VectorXd first_stage_coef;   // For each endogenous variable
+    Eigen::MatrixXd first_stage_coef;   // (m_aug x k1) Matrix of coefs for each endogenous variable
     double first_stage_f;               // F-statistic
     double first_stage_f_pvalue;
     bool weak_instruments;              // true if F < 10 (Stock-Yogo)
@@ -152,7 +152,7 @@ public:
         result.first_stage_f_pvalue = 1.0 - f_cdf(result.first_stage_f, m, n - m - 1);
         
         // First-stage coefficients (for reference)
-        result.first_stage_coef = (ZtZ_inv * Z_aug.transpose() * X_endog).col(0);
+        result.first_stage_coef = ZtZ_inv * Z_aug.transpose() * X_endog;
         
         // =====================================================================
         // STAGE 2: Regress Y on [X̂_endog, X_exog]

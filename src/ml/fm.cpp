@@ -170,4 +170,91 @@ void FactorizationMachine::fit(const Eigen::MatrixXd& X, const Eigen::VectorXd& 
     std::cout << "FM Converged: " << res.converged << " Iter: " << res.iterations << " Loss: " << res.min_value << std::endl;
 }
 
+QuantizedFMModel FactorizationMachine::quantize_model() const {
+    double w0;
+    Eigen::VectorXd w;
+    Eigen::MatrixXd V;
+    unpack_params(params, n_features, n_factors, w0, w, V);
+    
+    QuantizedFMModel qm;
+    qm.w0 = w0;
+    qm.task = task;
+    
+    // w: (d) -> (d x 1)
+    std::vector<float> w_vec(w.data(), w.data() + w.size());
+    qm.w_q = quantize(w_vec, n_features, 1);
+    
+    // V: (d x k)
+    std::vector<float> V_vec(V.size());
+    // Eigen stores column-major by default, but we need row-major for our QuantizedTensor if we stick to flat layout consistency?
+    // quantized.h assumes row-major A[i*K+k]. 
+    // V is (d x k). We want row-major flat.
+    // Eigen matrix loop (row, col)
+    for(int i=0; i<n_features; ++i) {
+        for(int j=0; j<n_factors; ++j) {
+            V_vec[i * n_factors + j] = V(i, j);
+        }
+    }
+    qm.V_q = quantize(V_vec, n_features, n_factors);
+    
+    // V_sq: (d x k)
+    std::vector<float> V_sq_vec(V.size());
+    for(size_t i=0; i<V_vec.size(); ++i) {
+        V_sq_vec[i] = V_vec[i] * V_vec[i];
+    }
+    qm.V_sq_q = quantize(V_sq_vec, n_features, n_factors);
+    
+    return qm;
+}
+
+std::vector<float> QuantizedFMModel::predict(const QuantizedTensor& X_q) {
+    int N = X_q.rows;
+    int d = X_q.cols;
+    int k = V_q.cols;
+    
+    if (d != w_q.rows) {
+        throw std::runtime_error("Feature dimension mismatch");
+    }
+    
+    // 1. Linear Term: X * w + w0
+    // w_q is (d x 1)
+    // bias vector for w0 correction? quantized_matmul_bias takes vector.
+    std::vector<float> bias_w0(1, static_cast<float>(w0));
+    std::vector<float> linear = quantized_matmul_bias(X_q, w_q, bias_w0);
+    
+    // 2. Interaction Term
+    // Term 1: (X * V)
+    std::vector<float> XV = quantized_matmul(X_q, V_q);
+    
+    // Term 2: (X^2 * V^2)
+    // Need quantized X^2. Dequantize efficiently?
+    // Or just compute on the fly. 
+    // Dequantize X -> Square -> Quantize is safest and reuses optimized matmul.
+    std::vector<float> X_data_deq = dequantize(X_q); // Flat vector (N*d)
+    std::transform(X_data_deq.begin(), X_data_deq.end(), X_data_deq.begin(), 
+                   [](float x){ return x*x; });
+    QuantizedTensor X_sq_q = quantize(X_data_deq, N, d);
+    
+    std::vector<float> S2 = quantized_matmul(X_sq_q, V_sq_q);
+    
+    // Combine
+    std::vector<float> preds(N);
+    for(int i=0; i<N; ++i) {
+        double interaction = 0.0;
+        for(int f=0; f<k; ++f) {
+            double s1 = XV[i * k + f];
+            double s2 = S2[i * k + f];
+            interaction += (s1 * s1 - s2);
+        }
+        
+        double y_pred = linear[i] + 0.5 * interaction;
+        
+        if (task == FMTask::Classification) {
+            y_pred = 1.0 / (1.0 + std::exp(-y_pred));
+        }
+        preds[i] = static_cast<float>(y_pred);
+    }
+    return preds;
+}
+
 } // namespace statelix

@@ -39,7 +39,8 @@ private:
     int n_features;
 
     // Recursive builder
-    std::unique_ptr<KDNode> build_recursive(std::vector<int>& indices, int depth);
+    // Recursive builder (optimized in-place)
+    std::unique_ptr<KDNode> build_recursive(std::vector<int>& indices, int start, int end, int depth);
 
     // Recursive search
     void search_recursive(const KDNode* node, const Eigen::VectorXd& point, int k, 

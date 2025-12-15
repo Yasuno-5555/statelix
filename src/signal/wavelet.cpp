@@ -34,36 +34,18 @@ void haar_step_inverse(Eigen::VectorXd& vec, int n) {
     int half = n / 2;
     Eigen::VectorXd temp(n);
     
-    double s = std::sqrt(2.0); // Inverse scaling
+    // Antigravity's fix: Use same scaling factor as forward (1/sqrt(2))
+    // Multiplied instead of divided.
+    double s = 1.0 / std::sqrt(2.0);
 
     for (int i = 0; i < half; ++i) {
         double avg = vec(i);
         double diff = vec(i + half);
         
-        // (a+b)/sq2 = avg
-        // (a-b)/sq2 = diff
-        // a+b = avg*sq2
-        // a-b = diff*sq2
-        // 2a = (avg+diff)*sq2 -> a = (avg+diff)/sq2 * 2/2? No.
-        // a = (avg+diff)*s/2? 
-        // Let's re-derive:
-        // x = (a+b)/r2, y = (a-b)/r2
-        // x+y = 2a/r2 -> a = (x+y)*r2 / 2 = (x+y)/r2
-        
-        temp(2 * i) = (avg + diff) / s;
-        temp(2 * i + 1) = (avg - diff) / s; 
-        
-        // Wait, if forward used 1/sqrt(2), then inverse uses 1/sqrt(2) too for orthogonal matrix?
-        // Inverse of orthogonal matrix is transpose. 
-        // [ 1  1 ] / r2
-        // [ 1 -1 ] / r2
-        // Transpose is same.
-        // So factor is same 1/sqrt(2) ?
-        // let s = 1/sqrt(2)
-        // a_out = (avg + diff) * s ??
-        // avg = (a+b)*s
-        // diff = (a-b)*s
-        // avg+diff = 2a*s -> a = (avg+diff)/(2s) = (avg+diff)/(2/r2) = (avg+diff)*r2/2 = (avg+diff)/r2 ok.
+        // Reconstruction: a = (avg+diff)*s, b = (avg-diff)*s
+        // (Assuming forward was (a+b)*s)
+        temp(2 * i) = (avg + diff) * s;
+        temp(2 * i + 1) = (avg - diff) * s; 
     }
     vec.head(n) = temp;
 }
@@ -80,13 +62,13 @@ Eigen::VectorXd WaveletTransform::transform(const Eigen::VectorXd& signal, int l
     Eigen::VectorXd coeffs = Eigen::VectorXd::Zero(p2);
     coeffs.head(n) = signal; // Zero pad remainder
     
-    int current_n = p2;
-    int max_levels = 0;
     int temp_n = p2;
+    int max_levels = 0;
     while (temp_n >= 2) { temp_n /= 2; max_levels++; }
     
     int levels_to_do = (level <= 0 || level > max_levels) ? max_levels : level;
-
+    
+    int current_n = p2;
     for (int i = 0; i < levels_to_do; ++i) {
         if (type == WaveletType::Haar) {
             haar_step_forward(coeffs, current_n);
@@ -97,16 +79,24 @@ Eigen::VectorXd WaveletTransform::transform(const Eigen::VectorXd& signal, int l
     return coeffs;
 }
 
-Eigen::VectorXd WaveletTransform::inverse(const Eigen::VectorXd& coeffs, int n_original_size) {
+Eigen::VectorXd WaveletTransform::inverse(const Eigen::VectorXd& coeffs, int n_original_size, int level) {
     int p2 = coeffs.size();
+    if (p2 == 0) return Eigen::VectorXd();
+    
     Eigen::VectorXd signal = coeffs;
     
-    // How many levels dependent on p2
-    // We assume fully decomposed for now or need to store level metadata
-    // Usually invalid inverse if we don't know "current_n" state.
-    // For full decomposition: start from n=2 up to p2
+    // Determine start level size
+    int temp_n = p2;
+    int max_levels = 0;
+    while (temp_n >= 2) { temp_n /= 2; max_levels++; }
     
-    int current_n = 2;
+    int levels_to_do = (level <= 0 || level > max_levels) ? max_levels : level;
+    
+    // Start reconstruction from the deepest decomposition level
+    // Deepest block size = p2 / 2^levels
+    // First step combines it into p2 / 2^(levels-1)
+    int current_n = p2 >> (levels_to_do - 1);
+    
     while (current_n <= p2) {
         if (type == WaveletType::Haar) {
             haar_step_inverse(signal, current_n);

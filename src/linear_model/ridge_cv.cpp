@@ -267,38 +267,3 @@ VectorXd predict_ridge(
 }
 
 } // namespace statelix
-
-// Python bindings
-namespace py = pybind11;
-
-PYBIND11_MODULE(statelix_ridge_cv, m) {
-    m.doc() = "Ridge regression with cross-validation module";
-    
-    // RidgeCVResult構造体
-    py::class_<statelix::RidgeCVResult>(m, "RidgeCVResult")
-        .def_readonly("best_lambda", &statelix::RidgeCVResult::best_lambda, "Best lambda value")
-        .def_readonly("coef", &statelix::RidgeCVResult::coef, "Coefficients at best lambda")
-        .def_readonly("intercept", &statelix::RidgeCVResult::intercept, "Intercept")
-        .def_readonly("lambda_path", &statelix::RidgeCVResult::lambda_path, "Lambda values tested")
-        .def_readonly("cv_scores", &statelix::RidgeCVResult::cv_scores, "Cross-validation scores")
-        .def_readonly("cv_std", &statelix::RidgeCVResult::cv_std, "Standard deviation of CV scores")
-        .def_readonly("gcv_scores", &statelix::RidgeCVResult::gcv_scores, "Generalized CV scores");
-    
-    // 関数
-    m.def("fit_ridge_cv", &statelix::fit_ridge_cv,
-          "Fit Ridge regression with cross-validation",
-          py::arg("X"), py::arg("y"),
-          py::arg("lambda_values") = std::vector<double>(),
-          py::arg("n_folds") = 5,
-          py::arg("fit_intercept") = true,
-          py::arg("use_gcv") = false);
-    
-    m.def("predict_ridge", &statelix::predict_ridge,
-          "Make predictions using fitted Ridge model",
-          py::arg("result"), py::arg("X_new"));
-    
-    m.def("compute_gcv", &statelix::compute_gcv,
-          "Compute Generalized Cross-Validation score",
-          py::arg("X"), py::arg("y"), py::arg("lambda"),
-          py::arg("fit_intercept") = true);
-}

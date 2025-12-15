@@ -42,23 +42,23 @@ CPDResult ChangePointDetector::fit_pelt(const Eigen::VectorXd& data) {
     int n = data.size();
     if (n < 2) return {{}, 0.0};
 
-    // Auto-penalty if not set or default
-    // BIC-like penalty: log(n) * p (p=1 usually? or variance) 
-    // Usually penalty scales with log(n)
-    double beta = (penalty <= 0) ? 2.0 * std::log(n) : penalty;
+    // Auto-penalty: BIC-like penalty
+    // 2 * log(n) * p is classic BIC. For mean shift, p=1. 
+    // Some suggest 3.0-4.0 * log(n) to avoid over-segmentation.
+    // We use 3.0 * log(n) as a balanced default.
+    double beta = (penalty <= 0) ? 3.0 * std::log(n) : penalty;
 
     MeanShiftCost cost_func(data);
 
     // F[t] = optimal cost to segment data[0...t-1]
     std::vector<double> F(n + 1);
-    F[0] = -beta; // Correction so F[0] + beta + cost = optimal? 
-                  // Standard PELT: F[0] = -beta. First point is index 0.
+    F[0] = 0.0; // Cost of empty segment is 0. Penalty applied when segment created.
     
-    // R = set of candidate changepoints (indices)
-    // Initially just {0}
+    // R = set of candidate changepoints (start indices of new segments)
+    // Initially {0} means we can start a segment at 0.
     std::vector<int> R = {0};
 
-    // Backpointers to reconstruct path
+    // Backpointers
     std::vector<int> cp(n + 1);
 
     for (int t_star = 1; t_star <= n; ++t_star) {
@@ -79,36 +79,23 @@ CPDResult ChangePointDetector::fit_pelt(const Eigen::VectorXd& data) {
         F[t_star] = min_val;
         cp[t_star] = best_tau;
 
-        // Pruning Step
-        // Remove tau from R if F[tau] + cost(tau, t_star) + K > F[t_star]
-        // K is usually beta (specifically related to penalty form)
-        // Standard inequality: F[tau] + c + K >= F[t_star]
-        // K is 0 for some configs, beta for others. usually K=0 works for simple, but K=beta is pruning condition.
-        // Let's stick strictly to PELT pruning:
-        // F(tau) + C(tau, t_star) + beta >= F(t_star) -> prune
-        // Wait, standard is "remove if F(tau) + C(tau, t_star) > F(t_star)"
-        
+        // Pruning Step (Killick et al. 2012)
+        // Keep tau if F[tau] + C(tau, t_star) + beta < F[t_star]
+        // Note: Strict inequality removes the optimal tau from R, 
+        // implying we commit to t_star for that path.
         std::vector<int> new_R;
-        new_R.reserve(R.size() + 1);
+        new_R.reserve(R.size()); // Heuristic size
         
         for (int tau : R) {
-            if ((F[tau] + cost_func(tau, t_star)) <= F[t_star] + beta) { // Modified pruning condition? 
-                // Wait. We want to keep viable candidates.
-                // If the cost to get here plus extending to t_star is ALREADY worse than best...
-                // But the condition is about FUTURE extensions.
-                // Standard PELT: prune if F[tau] + cost(tau, t_star) > F[t_star]. 
-                // (Note: beta is already in F[t_star] implicitly).
-                // Actually the pruning theorem says: F[t] + C(t, t*) + K >= F[t*] ? 
-                
-                // Let's use simple non-pruned O(N^2) first if unsure? 
-                // But User wants PELT specifically. 
-                // Pruning rule: Remove tau if F[tau] + cost(tau, t_star) > F[t_star]
-                // (assuming cost is sub-additive etc. Mean shift squares is).
+            double future_cost = F[tau] + cost_func(tau, t_star) + beta;
+            // Prune if future_cost > F[t_star]. So Keep if <=
+            if (future_cost <= F[t_star] + 1e-9) { // Add epsilon for float stability
                 new_R.push_back(tau);
             }
         }
+        // Add current t_star as start of next segment candidate
         new_R.push_back(t_star);
-        R = new_R;
+        R = std::move(new_R);
     }
 
     // Reconstruction

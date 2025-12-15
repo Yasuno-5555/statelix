@@ -1,28 +1,25 @@
 #include <Eigen/Dense>
-#include <pybind11/pybind11.h>
-#include <pybind11/eigen.h>
 #include <cmath>
 
-using Eigen::MatrixXd;
-using Eigen::VectorXd;
+namespace statelix {
 
-VectorXd ridge_solver(const MatrixXd& X, const VectorXd& y, double lambda) {
+Eigen::VectorXd ridge_solver(const Eigen::MatrixXd& X, const Eigen::VectorXd& y, double lambda) {
     int p = X.cols();
-    MatrixXd XtX = X.transpose() * X;
-    MatrixXd A = XtX + lambda * MatrixXd::Identity(p,p);
-    VectorXd Xty = X.transpose() * y;
+    Eigen::MatrixXd XtX = X.transpose() * X;
+    Eigen::MatrixXd A = XtX + lambda * Eigen::MatrixXd::Identity(p,p);
+    Eigen::VectorXd Xty = X.transpose() * y;
     return A.ldlt().solve(Xty);
 }
 
 // Lasso via coordinate descent (standardized X assumed)
-VectorXd lasso_cd(const MatrixXd& X, const VectorXd& y, double lambda, int maxit=1000, double tol=1e-6) {
+Eigen::VectorXd lasso_cd(const Eigen::MatrixXd& X, const Eigen::VectorXd& y, double lambda, int maxit=1000, double tol=1e-6) {
     int n = X.rows(), p = X.cols();
-    VectorXd beta = VectorXd::Zero(p);
-    VectorXd residual = y - X * beta;
+    Eigen::VectorXd beta = Eigen::VectorXd::Zero(p);
+    Eigen::VectorXd residual = y - X * beta;
     for (int iter=0; iter<maxit; ++iter) {
         double maxchg = 0;
         for (int j=0; j<p; ++j) {
-            VectorXd xj = X.col(j);
+            Eigen::VectorXd xj = X.col(j);
             double rho = xj.dot(residual) + beta(j) * xj.squaredNorm();
             double z = xj.squaredNorm();
             double newb = 0.0;
@@ -41,8 +38,4 @@ VectorXd lasso_cd(const MatrixXd& X, const VectorXd& y, double lambda, int maxit
     return beta;
 }
 
-namespace py = pybind11;
-PYBIND11_MODULE(statelix_penalty, m) {
-    m.def("ridge_solver", &ridge_solver);
-    m.def("lasso_cd", &lasso_cd);
-}
+} // namespace statelix

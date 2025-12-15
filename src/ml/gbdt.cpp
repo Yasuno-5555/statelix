@@ -15,7 +15,9 @@ double calculate_variance(const Eigen::VectorXd& y) {
 }
 
 void DecisionTreeRegressor::fit(const Eigen::MatrixXd& X, const Eigen::VectorXd& y) {
-    root = build_tree(X, y, 0);
+    std::vector<int> indices(X.rows());
+    std::iota(indices.begin(), indices.end(), 0);
+    root = build_tree(X, y, indices, 0);
 }
 
 double DecisionTreeRegressor::predict_one(const Eigen::VectorXd& x) const {
@@ -30,16 +32,24 @@ double DecisionTreeRegressor::predict_one(const Eigen::VectorXd& x) const {
     return node->value;
 }
 
-std::unique_ptr<TreeNode> DecisionTreeRegressor::build_tree(const Eigen::MatrixXd& X, const Eigen::VectorXd& y, int depth) {
+std::unique_ptr<TreeNode> DecisionTreeRegressor::build_tree(const Eigen::MatrixXd& X, const Eigen::VectorXd& y, 
+                                                            const std::vector<int>& indices, int depth) {
     auto node = std::make_unique<TreeNode>();
     
-    int n_samples = X.rows();
+    int n_samples = indices.size();
     int n_features = X.cols();
+
+    // Calculate mean of current node
+    double mean = 0.0;
+    if (n_samples > 0) {
+        for(int idx : indices) mean += y(idx);
+        mean /= n_samples;
+    }
 
     // Stopping criteria
     if (depth >= max_depth || n_samples < min_samples_split) {
         node->is_leaf = true;
-        node->value = (n_samples > 0) ? y.mean() : 0.0;
+        node->value = mean;
         return node;
     }
 
@@ -47,56 +57,64 @@ std::unique_ptr<TreeNode> DecisionTreeRegressor::build_tree(const Eigen::MatrixX
     int best_feature = -1;
     double best_threshold = 0.0;
     
-    // Greedy split search (very simple loop, O(N*F))
-    // Optimization: Use quantiles or histograms for large data
+    // Greedy split search
+    // Optimization: using indices to avoid copy
+    // Improvement: increased steps to 20 for better resolution
+    
+    // Pre-calculate sum and sum_sq for the node to quickly compute SSE
+    double total_sum = 0.0;
+    double total_sq_sum = 0.0;
+    for(int idx : indices) {
+        double val = y(idx);
+        total_sum += val;
+        total_sq_sum += val * val;
+    }
+    double total_sse = total_sq_sum - (total_sum * total_sum) / n_samples;
+
     for (int f = 0; f < n_features; ++f) {
-        // Simple strategy: Try every distinct value as threshold? Too slow.
-        // Try quantiles or just min/max steps?
-        // Let's implement extremely simple: 10 candidate splits per feature.
+        // Find min/max for this feature within current indices
+        double min_val = std::numeric_limits<double>::max();
+        double max_val = std::numeric_limits<double>::lowest();
         
-        double min_val = X.col(f).minCoeff();
-        double max_val = X.col(f).maxCoeff();
+        for(int idx : indices) {
+            double val = X(idx, f);
+            if(val < min_val) min_val = val;
+            if(val > max_val) max_val = val;
+        }
         
-        if (min_val == max_val) continue;
+        if (std::abs(max_val - min_val) < 1e-9) continue;
 
-        for (int k = 1; k < 10; ++k) {
-            double thresh = min_val + k * (max_val - min_val) / 10.0;
+        // Try 20 split points
+        for (int k = 1; k < 20; ++k) {
+            double thresh = min_val + k * (max_val - min_val) / 20.0;
             
-            // Vectorized filtering is clumsy in generic Eigen without masking
-            // Use logical indexing mask simulation
+            // Collect stats for left/right
+            double sum_l = 0.0, sq_sum_l = 0.0;
+            int n_l = 0;
             
-            // Mask
-            // Eigen::Array<bool, ...> is not directly usable for indexing rows easily without custom loop or plugin
-            // Loop is simpler for clarity here
-            
-            std::vector<int> left_idx, right_idx;
-            left_idx.reserve(n_samples); 
-            right_idx.reserve(n_samples);
-
-            for(int i=0; i<n_samples; ++i) {
-                if (X(i, f) <= thresh) left_idx.push_back(i);
-                else right_idx.push_back(i);
+            // Single pass to gather left stats (right is total - left)
+            for(int idx : indices) {
+                if (X(idx, f) <= thresh) {
+                    double val = y(idx);
+                    sum_l += val;
+                    sq_sum_l += val * val;
+                    n_l++;
+                }
             }
             
-            if (left_idx.empty() || right_idx.empty()) continue;
+            int n_r = n_samples - n_l;
+            if (n_l == 0 || n_r == 0) continue;
+
+            double sse_l = sq_sum_l - (sum_l * sum_l) / n_l;
             
-            // Calc MSE improvement
-            // MSE = ( n_l * var_l + n_r * var_r ) / n
-            // Actually just need to minimize Sum Squared Error since n is constant
-            // SSE = sum((y_l - mean_l)^2) + sum((y_r - mean_r)^2)
+            double sum_r = total_sum - sum_l;
+            double sq_sum_r = total_sq_sum - sq_sum_l;
+            double sse_r = sq_sum_r - (sum_r * sum_r) / n_r;
             
-            double sum_l = 0.0, sq_sum_l = 0.0;
-            for(int idx : left_idx) { sum_l += y(idx); sq_sum_l += y(idx)*y(idx); }
-            double sse_l = sq_sum_l - (sum_l*sum_l)/left_idx.size();
+            double current_total_sse = sse_l + sse_r;
             
-            double sum_r = 0.0, sq_sum_r = 0.0;
-            for(int idx : right_idx) { sum_r += y(idx); sq_sum_r += y(idx)*y(idx); }
-            double sse_r = sq_sum_r - (sum_r*sum_r)/right_idx.size();
-            
-            double total_sse = sse_l + sse_r;
-            
-            if (total_sse < best_mse) {
-                best_mse = total_sse;
+            if (current_total_sse < best_mse) {
+                best_mse = current_total_sse;
                 best_feature = f;
                 best_threshold = thresh;
             }
@@ -105,7 +123,7 @@ std::unique_ptr<TreeNode> DecisionTreeRegressor::build_tree(const Eigen::MatrixX
 
     if (best_feature == -1) { // No valid split found
         node->is_leaf = true;
-        node->value = y.mean();
+        node->value = mean;
         return node;
     }
 
@@ -115,28 +133,17 @@ std::unique_ptr<TreeNode> DecisionTreeRegressor::build_tree(const Eigen::MatrixX
     node->is_leaf = false;
     
     std::vector<int> left_idx, right_idx;
-    for(int i=0; i<n_samples; ++i) {
-        if (X(i, best_feature) <= best_threshold) left_idx.push_back(i);
-        else right_idx.push_back(i);
-    }
-    
-    // Construct sub-matrices (Copying data is slow but safe for now)
-    Eigen::MatrixXd X_left(left_idx.size(), n_features);
-    Eigen::VectorXd y_left(left_idx.size());
-    for(size_t i=0; i<left_idx.size(); ++i) {
-        X_left.row(i) = X.row(left_idx[i]);
-        y_left(i) = y(left_idx[i]);
-    }
-    
-    Eigen::MatrixXd X_right(right_idx.size(), n_features);
-    Eigen::VectorXd y_right(right_idx.size());
-    for(size_t i=0; i<right_idx.size(); ++i) {
-        X_right.row(i) = X.row(right_idx[i]);
-        y_right(i) = y(right_idx[i]);
-    }
+    left_idx.reserve(n_samples);
+    right_idx.reserve(n_samples);
 
-    node->left = build_tree(X_left, y_left, depth + 1);
-    node->right = build_tree(X_right, y_right, depth + 1);
+    for(int idx : indices) {
+        if (X(idx, best_feature) <= best_threshold) left_idx.push_back(idx);
+        else right_idx.push_back(idx);
+    }
+    
+    // Recursion without data copy
+    node->left = build_tree(X, y, left_idx, depth + 1);
+    node->right = build_tree(X, y, right_idx, depth + 1);
     
     return node;
 }

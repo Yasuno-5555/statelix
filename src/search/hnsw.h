@@ -207,7 +207,8 @@ public:
         int n_queries = queries.rows();
         std::vector<HNSWSearchResult> results(n_queries);
         
-        // Parallel could be added here
+        // Parallel execution
+        #pragma omp parallel for
         for (int i = 0; i < n_queries; ++i) {
             results[i] = query(queries.row(i), k);
         }

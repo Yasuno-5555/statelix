@@ -98,6 +98,7 @@ PoissonResult PoissonRegression::fit(const Eigen::MatrixXd& X, const Eigen::Vect
 }
 
 // 3. Negative Binomial Regression
+// TODO: Implement theta estimation (currently fixed at 1.0)
 NegBinResult NegBinRegression::fit(const Eigen::MatrixXd& X, const Eigen::VectorXd& y) {
     int p = X.cols();
     Eigen::VectorXd coef = Eigen::VectorXd::Zero(p);
@@ -150,10 +151,6 @@ GammaResult GammaRegression::fit(const Eigen::MatrixXd& X, const Eigen::VectorXd
              if(W_diag(i) < 1e-8) W_diag(i) = 1e-8; 
         }
 
-        // z = eta + (y - mu) * du/deta * 1/Var(mu)? 
-        // Canonical link (inverse) vs Log link:
-        // Assume Log link here: eta = log(mu) -> mu = exp(eta) -> dmu/deta = mu
-        // z = eta + (y - mu) / mu
         Eigen::VectorXd z = eta.array() + (y - mu).array() / mu.array();
 
         Eigen::MatrixXd XTW = X.transpose() * W_diag.asDiagonal();
@@ -181,34 +178,26 @@ ProbitResult ProbitRegression::fit(const Eigen::MatrixXd& X, const Eigen::Vector
 
     for (; iter < max_iter; ++iter) {
         Eigen::VectorXd eta = X * coef;
-        
-        Eigen::VectorXd mu(eta.size());
+        Eigen::VectorXd z(eta.size());
         Eigen::VectorXd W_diag(eta.size());
         
         for (int j = 0; j < eta.size(); j++) {
-            double prob = Phi(eta[j]);
-            // Clip
+            double prob = Phi(eta[j]); // p
+            double pdf = phi(eta[j]);  // phi
+            
+            // Clip probability
             if(prob < 1e-8) prob = 1e-8;
             if(prob > 1.0 - 1e-8) prob = 1.0 - 1e-8;
             
-            mu[j] = prob;
-            double pdf = phi(eta[j]);
-            W_diag[j] = (pdf * pdf) / (prob * (1.0 - prob));
-        }
-
-        Eigen::VectorXd z = eta.array() + (y - mu).array() * (1.0 / W_diag.array()); // Simplified? No..
-        // z = eta + (y - p) / (phi^2 / p(1-p)) * phi = eta + (y-p) / phi * 1 / (phi/p(1-p)) ?
-        // Correct IRLS for Probit:
-        // W = phi^2 / p(1-p)
-        // z = eta + (y - p) * (1 / phi) ? No.
-        // z = eta + (y - p) * (d_eta / d_mu) = eta + (y-p) * 1/phi
-        z = eta.array() + (y - mu).array() / (X * coef).unaryExpr([](double x){ return phi(x); }).array();
-        
-        // Re-calculate simpler:
-        for (int j = 0; j < eta.size(); j++) {
-            double pdf = phi(eta[j]);
+            // Clip Gradient pdf
             if(pdf < 1e-8) pdf = 1e-8;
-            z[j] = eta[j] + (y[j] - mu[j]) / pdf;
+
+            // Working Weights: W = pdf^2 / (p * (1-p))
+            W_diag[j] = (pdf * pdf) / (prob * (1.0 - prob));
+            
+            // Working Response: z = eta + (y - p) / pdf
+            // Note: If pdf is tiny, this explodes. Trust clipping.
+            z[j] = eta[j] + (y[j] - prob) / pdf;
         }
 
         Eigen::MatrixXd XTW = X.transpose() * W_diag.asDiagonal();

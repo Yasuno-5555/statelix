@@ -32,7 +32,8 @@ public:
     double predict_one(const Eigen::VectorXd& x) const;
     
 private:
-    std::unique_ptr<TreeNode> build_tree(const Eigen::MatrixXd& X, const Eigen::VectorXd& y, int depth);
+    std::unique_ptr<TreeNode> build_tree(const Eigen::MatrixXd& X, const Eigen::VectorXd& y, 
+                                         const std::vector<int>& indices, int depth);
 };
 
 struct GBDTResult {

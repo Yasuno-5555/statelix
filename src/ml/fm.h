@@ -5,6 +5,7 @@
 #include <vector>
 #include <cmath>
 #include "../optimization/lbfgs.h"
+#include "../quant/quantized.h"
 
 namespace statelix {
 
@@ -34,6 +35,7 @@ private:
                        double w0, const Eigen::VectorXd& w, const Eigen::MatrixXd& V);
 
     // Functor for L-BFGS
+    // Functor for L-BFGS
     struct FMObjective {
         const Eigen::MatrixXd& X;
         const Eigen::VectorXd& y;
@@ -42,6 +44,23 @@ private:
         // This operator is called by L-BFGS
         double operator()(const Eigen::VectorXd& params, Eigen::VectorXd& grad);
     };
+
+    // --- Quantization Support ---
+    struct QuantizedFMModel; // Forward declaration
+    QuantizedFMModel quantize_model() const;
+};
+
+// INT8 Quantized FM Model for Inference
+struct QuantizedFMModel {
+    double w0;
+    QuantizedTensor w_q; // (1 x d) - viewed as matrix for matmul
+    QuantizedTensor V_q; // (d x k)
+    QuantizedTensor V_sq_q; // (d x k) Element-wise squared V
+    FMTask task;
+    
+    // Predict using quantized inputs
+    // Input X_q must be (N x d)
+    std::vector<float> predict(const QuantizedTensor& X_q);
 };
 
 } // namespace statelix

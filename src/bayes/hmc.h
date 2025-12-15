@@ -328,7 +328,10 @@ private:
             
             // Check for divergence
             auto [new_val, new_grad] = objective.value_and_gradient(theta);
-            if (!std::isfinite(new_val) || new_val > 1e10) {
+            
+            // Robust divergence check: NaN, Inf, or Energy Explosion
+            if (!std::isfinite(new_val) || std::isnan(new_val) || std::isinf(new_val) || 
+                new_val > 1e10 || !new_grad.allFinite()) {
                 diverged = true;
                 return;
             }
@@ -343,7 +346,7 @@ private:
         
         // Half step for momentum
         auto [final_val, final_grad] = objective.value_and_gradient(theta);
-        if (!std::isfinite(final_val)) {
+        if (!std::isfinite(final_val) || !final_grad.allFinite()) {
             diverged = true;
             return;
         }

@@ -29,7 +29,9 @@ public:
     Eigen::VectorXd transform(const Eigen::VectorXd& signal, int level = 0);
     
     // Inverse Transform
-    Eigen::VectorXd inverse(const Eigen::VectorXd& coeffs, int n_original_size);
+    // Reconstructs signal from coefficients up to 'level'. 
+    // If level <= 0, assumes full decomposition (level=max).
+    Eigen::VectorXd inverse(const Eigen::VectorXd& coeffs, int n_original_size, int level = 0);
 };
 
 } // namespace statelix

@@ -1,8 +1,10 @@
 #include <Eigen/Dense>
 #include <pybind11/pybind11.h>
 #include <pybind11/eigen.h>
+#include <pybind11/stl.h>
 #include <cmath>
 #include <algorithm>
+#include <vector>
 
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
@@ -20,10 +22,17 @@ struct DiagnosticsResult {
     VectorXd covratio;               // COVRATIO（共分散行列への影響）
 };
 
-// VIF (Variance Inflation Factor) の計算
+/**
+ * @brief VIF (Variance Inflation Factor) の計算
+ * 
+ * @note X should NOT include an intercept column for meaningful VIF.
+ *       If X contains an intercept (column of 1s), VIF for that column is meaningless.
+ *       Consider passing X without the intercept term.
+ */
 VectorXd vif(const MatrixXd& X) {
-    int p = X.cols();
+    const int p = static_cast<int>(X.cols());
     VectorXd out(p);
+    
     for (int j = 0; j < p; ++j) {
         // X_jを他の変数で回帰
         MatrixXd Xr(X.rows(), p - 1);
@@ -32,35 +41,48 @@ VectorXd vif(const MatrixXd& X) {
             if (k != j) Xr.col(idx++) = X.col(k);
         }
         VectorXd y = X.col(j);
+        
+        // Use LDLT for numerical stability
         VectorXd coef = (Xr.transpose() * Xr).ldlt().solve(Xr.transpose() * y);
         VectorXd pred = Xr * coef;
         double ssr = (pred - y).squaredNorm();
         double sst = (y.array() - y.mean()).matrix().squaredNorm();
-        double r2 = 1.0 - ssr / sst;
         
-        // VIF = 1 / (1 - R²)
-        out(j) = 1.0 / (1.0 - r2);
+        // Handle edge case: constant column
+        if (sst < 1e-12) {
+            out(j) = std::numeric_limits<double>::infinity();
+        } else {
+            double r2 = 1.0 - ssr / sst;
+            // VIF = 1 / (1 - R²)
+            out(j) = 1.0 / std::max(1.0 - r2, 1e-12);
+        }
     }
     return out;
 }
 
-// Hat行列の対角要素（レバレッジ）を計算
+/**
+ * @brief Hat行列の対角要素（レバレッジ）を計算（ベクトル化版）
+ * 
+ * h_ii = x_i^T (X^T X)^{-1} x_i = [X @ (X^T X)^{-1}]_{i,:} · x_i
+ * Vectorized: h = rowwise_sum( X .* (X @ XtX_inv) )
+ */
 VectorXd compute_leverage(const MatrixXd& X) {
-    int n = X.rows();
-    int p = X.cols();
+    // Compute (X^T X)^{-1} using LDLT for numerical stability
+    MatrixXd XtX_inv = (X.transpose() * X).ldlt().solve(
+        MatrixXd::Identity(X.cols(), X.cols())
+    );
     
-    // Hat行列: H = X(X'X)^{-1}X'
-    // レバレッジ = diag(H)
-    MatrixXd XtX = X.transpose() * X;
-    MatrixXd XtX_inv = XtX.inverse();
-    
-    VectorXd leverage(n);
-    for (int i = 0; i < n; ++i) {
-        VectorXd xi = X.row(i).transpose();
-        leverage(i) = xi.dot(XtX_inv * xi);
-    }
-    
-    return leverage;
+    // Vectorized leverage computation: h = rowwise_sum(X .* (X * XtX_inv))
+    MatrixXd H_diag_contrib = X.array() * (X * XtX_inv).array();
+    return H_diag_contrib.rowwise().sum();
+}
+
+/**
+ * @brief Compute leverage with pre-computed XtX_inv (for efficiency in compute_diagnostics)
+ */
+VectorXd compute_leverage_with_inv(const MatrixXd& X, const MatrixXd& XtX_inv) {
+    MatrixXd H_diag_contrib = X.array() * (X * XtX_inv).array();
+    return H_diag_contrib.rowwise().sum();
 }
 
 // Cook's距離の計算
@@ -70,8 +92,8 @@ VectorXd cooks_distance(
     double mse,
     const VectorXd& leverage
 ) {
-    int n = X.rows();
-    int p = X.cols();
+    const int n = static_cast<int>(X.rows());
+    const int p = static_cast<int>(X.cols());
     
     VectorXd cooks_d(n);
     for (int i = 0; i < n; ++i) {
@@ -79,8 +101,9 @@ VectorXd cooks_distance(
         double e_i = residuals(i);
         
         // Cook's D_i = (e_i² / (p * MSE)) * (h_ii / (1 - h_ii)²)
+        double one_minus_h = std::max(1.0 - h_ii, 1e-12);
         double numerator = e_i * e_i * h_ii;
-        double denominator = p * mse * std::pow(1.0 - h_ii, 2.0);
+        double denominator = p * mse * one_minus_h * one_minus_h;
         
         cooks_d(i) = numerator / denominator;
     }
@@ -94,7 +117,7 @@ VectorXd studentized_residuals(
     double mse,
     const VectorXd& leverage
 ) {
-    int n = residuals.size();
+    const int n = static_cast<int>(residuals.size());
     VectorXd stud_resid(n);
     
     for (int i = 0; i < n; ++i) {
@@ -102,42 +125,66 @@ VectorXd studentized_residuals(
         double e_i = residuals(i);
         
         // スチューデント化残差 = e_i / (sqrt(MSE * (1 - h_ii)))
-        double se = std::sqrt(mse * (1.0 - h_ii));
+        double one_minus_h = std::max(1.0 - h_ii, 1e-12);
+        double se = std::sqrt(mse * one_minus_h);
         stud_resid(i) = e_i / se;
     }
     
     return stud_resid;
 }
 
-// DFBETAS の計算（各観測値が各係数に与える影響）
-MatrixXd compute_dfbetas(
+/**
+ * @brief DFBETAS の計算（各観測値が各係数に与える影響）
+ * 
+ * Uses pre-computed XtX_inv for efficiency.
+ */
+MatrixXd compute_dfbetas_with_inv(
     const MatrixXd& X,
     const VectorXd& residuals,
     double mse,
-    const VectorXd& leverage
+    const VectorXd& leverage,
+    const MatrixXd& XtX_inv
 ) {
-    int n = X.rows();
-    int p = X.cols();
+    const int n = static_cast<int>(X.rows());
+    const int p = static_cast<int>(X.cols());
     
-    MatrixXd XtX_inv = (X.transpose() * X).inverse();
     MatrixXd dfbetas(n, p);
+    
+    // Precompute standard errors for each coefficient
+    VectorXd se_coef(p);
+    for (int j = 0; j < p; ++j) {
+        se_coef(j) = std::sqrt(mse * XtX_inv(j, j));
+    }
     
     for (int i = 0; i < n; ++i) {
         double h_ii = leverage(i);
         double e_i = residuals(i);
         VectorXd xi = X.row(i).transpose();
         
-        // DFBETAS_i = (e_i / (1 - h_ii)) * (X'X)^{-1} * x_i / sqrt(MSE * diag((X'X)^{-1}))
-        double scale = e_i / (1.0 - h_ii);
+        // DFBETAS_i = (e_i / (1 - h_ii)) * (X'X)^{-1} * x_i / se_j
+        double one_minus_h = std::max(1.0 - h_ii, 1e-12);
+        double scale = e_i / one_minus_h;
         VectorXd influence = scale * (XtX_inv * xi);
         
         for (int j = 0; j < p; ++j) {
-            double se_j = std::sqrt(mse * XtX_inv(j, j));
-            dfbetas(i, j) = influence(j) / se_j;
+            dfbetas(i, j) = influence(j) / se_coef(j);
         }
     }
     
     return dfbetas;
+}
+
+// DFBETAS の計算（スタンドアロン版）
+MatrixXd compute_dfbetas(
+    const MatrixXd& X,
+    const VectorXd& residuals,
+    double mse,
+    const VectorXd& leverage
+) {
+    MatrixXd XtX_inv = (X.transpose() * X).ldlt().solve(
+        MatrixXd::Identity(X.cols(), X.cols())
+    );
+    return compute_dfbetas_with_inv(X, residuals, mse, leverage, XtX_inv);
 }
 
 // DFFITS の計算（各観測値が予測値に与える影響）
@@ -146,7 +193,7 @@ VectorXd compute_dffits(
     double mse,
     const VectorXd& leverage
 ) {
-    int n = residuals.size();
+    const int n = static_cast<int>(residuals.size());
     VectorXd dffits(n);
     
     for (int i = 0; i < n; ++i) {
@@ -154,8 +201,9 @@ VectorXd compute_dffits(
         double e_i = residuals(i);
         
         // DFFITS_i = e_i / sqrt(MSE * (1 - h_ii)) * sqrt(h_ii / (1 - h_ii))
-        double stud_res = e_i / std::sqrt(mse * (1.0 - h_ii));
-        dffits(i) = stud_res * std::sqrt(h_ii / (1.0 - h_ii));
+        double one_minus_h = std::max(1.0 - h_ii, 1e-12);
+        double stud_res = e_i / std::sqrt(mse * one_minus_h);
+        dffits(i) = stud_res * std::sqrt(h_ii / one_minus_h);
     }
     
     return dffits;
@@ -168,7 +216,7 @@ VectorXd compute_covratio(
     double mse,
     const VectorXd& leverage
 ) {
-    int n = residuals.size();
+    const int n = static_cast<int>(residuals.size());
     VectorXd covratio(n);
     
     for (int i = 0; i < n; ++i) {
@@ -176,24 +224,32 @@ VectorXd compute_covratio(
         double e_i = residuals(i);
         
         // MSE(i) = ((n - p) * MSE - e_i² / (1 - h_ii)) / (n - p - 1)
-        double mse_i = ((n - p) * mse - (e_i * e_i) / (1.0 - h_ii)) / (n - p - 1.0);
+        double one_minus_h = std::max(1.0 - h_ii, 1e-12);
+        double mse_i = ((n - p) * mse - (e_i * e_i) / one_minus_h) / (n - p - 1.0);
+        
+        // Ensure mse_i is positive
+        mse_i = std::max(mse_i, 1e-12);
         
         // COVRATIO_i = (MSE(i) / MSE)^p * (1 / (1 - h_ii))
-        covratio(i) = std::pow(mse_i / mse, static_cast<double>(p)) / (1.0 - h_ii);
+        covratio(i) = std::pow(mse_i / mse, static_cast<double>(p)) / one_minus_h;
     }
     
     return covratio;
 }
 
-// 完全な診断統計量の計算
+/**
+ * @brief 完全な診断統計量の計算（最適化版）
+ * 
+ * Computes XtX_inv once and shares it across all functions.
+ */
 DiagnosticsResult compute_diagnostics(
     const MatrixXd& X,
     const VectorXd& y,
     const VectorXd& fitted_values,
     const VectorXd& residuals
 ) {
-    int n = X.rows();
-    int p = X.cols();
+    const int n = static_cast<int>(X.rows());
+    const int p = static_cast<int>(X.cols());
     
     DiagnosticsResult result;
     
@@ -201,8 +257,13 @@ DiagnosticsResult compute_diagnostics(
     double sse = residuals.squaredNorm();
     double mse = sse / (n - p);
     
-    // レバレッジ
-    result.leverage = compute_leverage(X);
+    // Compute (X^T X)^{-1} once using LDLT for numerical stability
+    MatrixXd XtX_inv = (X.transpose() * X).ldlt().solve(
+        MatrixXd::Identity(p, p)
+    );
+    
+    // レバレッジ (using pre-computed XtX_inv)
+    result.leverage = compute_leverage_with_inv(X, XtX_inv);
     
     // VIF
     result.vif = vif(X);
@@ -213,8 +274,8 @@ DiagnosticsResult compute_diagnostics(
     // スチューデント化残差
     result.studentized_residuals = studentized_residuals(residuals, mse, result.leverage);
     
-    // DFBETAS
-    result.dfbetas = compute_dfbetas(X, residuals, mse, result.leverage);
+    // DFBETAS (using pre-computed XtX_inv)
+    result.dfbetas = compute_dfbetas_with_inv(X, residuals, mse, result.leverage, XtX_inv);
     
     // DFFITS
     result.dffits = compute_dffits(residuals, mse, result.leverage);
@@ -256,8 +317,33 @@ std::vector<int> detect_high_leverage(
     return high_lev;
 }
 
-// 影響力のある観測値の検出（Cook's距離）
+/**
+ * @brief 影響力のある観測値の検出（Cook's距離）
+ * 
+ * @param cooks_distance Cook's distance vector
+ * @param threshold Threshold for influential points. 
+ *                  Common choices: 4/n (default), 4/(n-p-1), or 1.0 for extreme cases.
+ */
 std::vector<int> detect_influential(
+    const VectorXd& cooks_distance,
+    int n,  // Added n parameter for default threshold
+    double threshold = -1.0  // -1 means use 4/n
+) {
+    if (threshold < 0) {
+        threshold = 4.0 / n;  // Rule of thumb: 4/n
+    }
+    
+    std::vector<int> influential;
+    for (int i = 0; i < cooks_distance.size(); ++i) {
+        if (cooks_distance(i) > threshold) {
+            influential.push_back(i);
+        }
+    }
+    return influential;
+}
+
+// Backward-compatible version
+std::vector<int> detect_influential_simple(
     const VectorXd& cooks_distance,
     double threshold = 1.0
 ) {
@@ -272,64 +358,3 @@ std::vector<int> detect_influential(
 
 } // namespace statelix
 
-// Python bindings
-namespace py = pybind11;
-
-PYBIND11_MODULE(statelix_diagnostics, m) {
-    m.doc() = "Regression diagnostics module (VIF, Cook's D, leverage, influence measures)";
-    
-    // DiagnosticsResult構造体
-    py::class_<statelix::DiagnosticsResult>(m, "DiagnosticsResult")
-        .def_readonly("vif", &statelix::DiagnosticsResult::vif, "Variance Inflation Factors")
-        .def_readonly("cooks_distance", &statelix::DiagnosticsResult::cooks_distance, "Cook's distances")
-        .def_readonly("leverage", &statelix::DiagnosticsResult::leverage, "Leverage values (hat values)")
-        .def_readonly("studentized_residuals", &statelix::DiagnosticsResult::studentized_residuals, "Studentized residuals")
-        .def_readonly("dfbetas", &statelix::DiagnosticsResult::dfbetas, "DFBETAS (influence on coefficients)")
-        .def_readonly("dffits", &statelix::DiagnosticsResult::dffits, "DFFITS (influence on fitted values)")
-        .def_readonly("covratio", &statelix::DiagnosticsResult::covratio, "COVRATIO (influence on covariance matrix)");
-    
-    // 関数
-    m.def("vif", &statelix::vif,
-          "Compute Variance Inflation Factors",
-          py::arg("X"));
-    
-    m.def("compute_leverage", &statelix::compute_leverage,
-          "Compute leverage (hat values)",
-          py::arg("X"));
-    
-    m.def("cooks_distance", &statelix::cooks_distance,
-          "Compute Cook's distances",
-          py::arg("X"), py::arg("residuals"), py::arg("mse"), py::arg("leverage"));
-    
-    m.def("studentized_residuals", &statelix::studentized_residuals,
-          "Compute studentized residuals",
-          py::arg("residuals"), py::arg("mse"), py::arg("leverage"));
-    
-    m.def("compute_dfbetas", &statelix::compute_dfbetas,
-          "Compute DFBETAS (influence on coefficients)",
-          py::arg("X"), py::arg("residuals"), py::arg("mse"), py::arg("leverage"));
-    
-    m.def("compute_dffits", &statelix::compute_dffits,
-          "Compute DFFITS (influence on fitted values)",
-          py::arg("residuals"), py::arg("mse"), py::arg("leverage"));
-    
-    m.def("compute_covratio", &statelix::compute_covratio,
-          "Compute COVRATIO (influence on covariance matrix)",
-          py::arg("p"), py::arg("residuals"), py::arg("mse"), py::arg("leverage"));
-    
-    m.def("compute_diagnostics", &statelix::compute_diagnostics,
-          "Compute all regression diagnostics",
-          py::arg("X"), py::arg("y"), py::arg("fitted_values"), py::arg("residuals"));
-    
-    m.def("detect_outliers", &statelix::detect_outliers,
-          "Detect outliers based on studentized residuals",
-          py::arg("studentized_residuals"), py::arg("threshold") = 3.0);
-    
-    m.def("detect_high_leverage", &statelix::detect_high_leverage,
-          "Detect high leverage points",
-          py::arg("leverage"), py::arg("p"), py::arg("n"));
-    
-    m.def("detect_influential", &statelix::detect_influential,
-          "Detect influential observations based on Cook's distance",
-          py::arg("cooks_distance"), py::arg("threshold") = 1.0);
-}

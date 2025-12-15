@@ -99,12 +99,8 @@ ICPResult ICP::align(const Eigen::MatrixXd& source, const Eigen::MatrixXd& targe
         t = R_step * t + t_step;
         
         // D. Apply Transformation to Source for next iteration
-        // current_source = (R_step * current_source^T)^T + t_step^T ??
-        // Actually easier: just transform current_source directly using R_step and t_step
-        // P_new = R_step * P + t_step
-        for (int i = 0; i < n; ++i) {
-            current_source.row(i) = (R_step * current_source.row(i).transpose()).transpose() + t_step.transpose();
-        }
+        // vectorized: current_source = (current_source * R_step^T).rowwise() + t_step^T
+        current_source = (current_source * R_step.transpose()).rowwise() + t_step.transpose();
     }
 
     return {R, t, prev_rmse, iter, converged};

@@ -13,19 +13,24 @@ void KDTree::fit(const Eigen::MatrixXd& X) {
     std::vector<int> indices(n_samples);
     for(int i = 0; i < n_samples; ++i) indices[i] = i;
 
-    root = build_recursive(indices, 0);
+    // Use in-place construction
+    root = build_recursive(indices, 0, n_samples, 0);
 }
 
-// Uses std::nth_element to find median in O(N)
-std::unique_ptr<KDNode> KDTree::build_recursive(std::vector<int>& indices, int depth) {
-    if (indices.empty()) return nullptr;
+// Optimized in-place build: O(N log N) time, O(1) extra space per node (stack only)
+std::unique_ptr<KDNode> KDTree::build_recursive(std::vector<int>& indices, int start, int end, int depth) {
+    if (start >= end) return nullptr;
 
     // Cycle through axes
     int axis = depth % n_features;
 
-    // Find median
-    int mid = indices.size() / 2;
-    std::nth_element(indices.begin(), indices.begin() + mid, indices.end(),
+    // Find median using nth_element on the range [start, end)
+    int len = end - start;
+    int mid = start + len / 2;
+    
+    std::nth_element(indices.begin() + start, 
+                     indices.begin() + mid, 
+                     indices.begin() + end,
         [&](int a, int b) {
             return data(a, axis) < data(b, axis);
         }
@@ -34,12 +39,11 @@ std::unique_ptr<KDNode> KDTree::build_recursive(std::vector<int>& indices, int d
     int median_idx = indices[mid];
     auto node = std::make_unique<KDNode>(median_idx, axis);
 
-    // Split indices
-    std::vector<int> left_indices(indices.begin(), indices.begin() + mid);
-    std::vector<int> right_indices(indices.begin() + mid + 1, indices.end());
-
-    node->left = build_recursive(left_indices, depth + 1);
-    node->right = build_recursive(right_indices, depth + 1);
+    // Recursively build subtrees
+    // Left: [start, mid)
+    // Right: [mid + 1, end)
+    node->left = build_recursive(indices, start, mid, depth + 1);
+    node->right = build_recursive(indices, mid + 1, end, depth + 1);
 
     return node;
 }

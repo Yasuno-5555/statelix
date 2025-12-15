@@ -292,11 +292,13 @@ public:
      * 
      * @param likelihood Negative log-likelihood as Objective
      * @param x0 Initial parameter values
+     * @param n_obs Number of observations (for BIC), defaults to 100 if unknown
      * @return MAPResult containing mode and uncertainty
      */
     MAPResult estimate(
         Objective& likelihood,
-        const Eigen::VectorXd& x0
+        const Eigen::VectorXd& x0,
+        int n_obs = 100
     ) {
         if (!prior) {
             prior = std::make_unique<FlatPrior>();
@@ -333,7 +335,7 @@ public:
         
         // Laplace approximation for uncertainty
         if (compute_uncertainty) {
-            compute_laplace_approximation(likelihood, result);
+            compute_laplace_approximation(likelihood, result, n_obs);
         }
         
         return result;
@@ -346,10 +348,11 @@ public:
     MAPResult estimate(
         LikelihoodFunc neg_log_lik,
         std::function<Eigen::VectorXd(const Eigen::VectorXd&)> grad_neg_log_lik,
-        const Eigen::VectorXd& x0
+        const Eigen::VectorXd& x0,
+        int n_obs = 100
     ) {
         LambdaObjective lik_obj(neg_log_lik, grad_neg_log_lik);
-        return estimate(lik_obj, x0);
+        return estimate(lik_obj, x0, n_obs);
     }
 
 private:
@@ -392,7 +395,7 @@ private:
     };
     
     // Laplace approximation for posterior uncertainty
-    void compute_laplace_approximation(Objective& likelihood, MAPResult& result) {
+    void compute_laplace_approximation(Objective& likelihood, MAPResult& result, int n_obs) {
         int d = result.mode.size();
         
         // Compute Hessian via finite differences (or use provided if available)
@@ -425,8 +428,7 @@ private:
         
         // BIC (uses only likelihood part)
         // BIC = -2 log P(D|θ_MAP) + d log(n)
-        // Note: n not available here, so we approximate
-        result.bic = 2 * result.neg_log_likelihood + d * std::log(100.0); // Placeholder n=100
+        result.bic = 2 * result.neg_log_likelihood + d * std::log(static_cast<double>(n_obs));
     }
     
     // Numerical Hessian computation
@@ -470,11 +472,12 @@ private:
 inline MAPResult map_gaussian(
     Objective& likelihood,
     const Eigen::VectorXd& x0,
-    double prior_precision = 1.0
+    double prior_precision = 1.0,
+    int n_obs = 100
 ) {
     MAPEstimator estimator;
     estimator.prior = std::make_unique<GaussianPrior>(prior_precision);
-    return estimator.estimate(likelihood, x0);
+    return estimator.estimate(likelihood, x0, n_obs);
 }
 
 /**
@@ -483,11 +486,12 @@ inline MAPResult map_gaussian(
 inline MAPResult map_laplace(
     Objective& likelihood,
     const Eigen::VectorXd& x0,
-    double prior_scale = 1.0
+    double prior_scale = 1.0,
+    int n_obs = 100
 ) {
     MAPEstimator estimator;
     estimator.prior = std::make_unique<LaplacePrior>(prior_scale);
-    return estimator.estimate(likelihood, x0);
+    return estimator.estimate(likelihood, x0, n_obs);
 }
 
 /**
@@ -495,11 +499,12 @@ inline MAPResult map_laplace(
  */
 inline MAPResult mle(
     Objective& likelihood,
-    const Eigen::VectorXd& x0
+    const Eigen::VectorXd& x0,
+    int n_obs = 100
 ) {
     MAPEstimator estimator;
     estimator.prior = std::make_unique<FlatPrior>();
-    return estimator.estimate(likelihood, x0);
+    return estimator.estimate(likelihood, x0, n_obs);
 }
 
 } // namespace statelix

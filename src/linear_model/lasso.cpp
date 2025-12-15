@@ -1,14 +1,11 @@
 #include <Eigen/Dense>
-#include <pybind11/pybind11.h>
-#include <pybind11/eigen.h>
 #include <cmath>
 #include <vector>
 
-using Eigen::MatrixXd;
-using Eigen::VectorXd;
+namespace statelix {
 
 struct LassoResult {
-    VectorXd coef;    // original-scale coefficients (length p)
+    Eigen::VectorXd coef;    // original-scale coefficients (length p)
     double intercept; // intercept (original scale)
     int iterations;
     bool converged;
@@ -21,8 +18,8 @@ inline double soft_threshold(double z, double gamma) {
 }
 
 LassoResult fit_lasso_cd(
-    const MatrixXd& X,
-    const VectorXd& y,
+    const Eigen::MatrixXd& X,
+    const Eigen::VectorXd& y,
     double lambda,
     int max_iter = 1000,
     double tol = 1e-6,
@@ -32,13 +29,13 @@ LassoResult fit_lasso_cd(
     int p = X.cols();
 
     // Means and stds
-    VectorXd x_mean = X.colwise().mean();
-    VectorXd x_std(p);
-    MatrixXd Xs = X; // standardized copy or original if not standardize
+    Eigen::VectorXd x_mean = X.colwise().mean();
+    Eigen::VectorXd x_std(p);
+    Eigen::MatrixXd Xs = X; // standardized copy or original if not standardize
     for (int j = 0; j < p; ++j) {
-        VectorXd col = X.col(j);
+        Eigen::VectorXd col = X.col(j);
         double mean = x_mean(j);
-        VectorXd centered = col.array() - mean;
+        Eigen::VectorXd centered = col.array() - mean;
         double sd = std::sqrt((centered.array().square().sum()) / (n - 1.0));
         if (sd < 1e-12) sd = 1.0; // avoid division by zero (constant column)
         x_std(j) = sd;
@@ -50,18 +47,18 @@ LassoResult fit_lasso_cd(
     }
 
     double y_mean = y.mean();
-    VectorXd y_center = y.array() - y_mean;
+    Eigen::VectorXd y_center = y.array() - y_mean;
 
     // For standardized Xs, we do Lasso on centered y
-    VectorXd beta = VectorXd::Zero(p);
-    VectorXd residual = y_center - Xs * beta;
+    Eigen::VectorXd beta = Eigen::VectorXd::Zero(p);
+    Eigen::VectorXd residual = y_center - Xs * beta;
 
     int iter;
     bool converged = false;
     for (iter = 0; iter < max_iter; ++iter) {
         double maxchg = 0.0;
         for (int j = 0; j < p; ++j) {
-            VectorXd xj = Xs.col(j);
+            Eigen::VectorXd xj = Xs.col(j);
             double xj_norm2 = xj.squaredNorm();
             if (xj_norm2 < 1e-12) continue; // skip nearly-constant post-std column
 
@@ -83,7 +80,7 @@ LassoResult fit_lasso_cd(
     }
 
     // Convert back to original scale if standardized
-    VectorXd coef_orig(p);
+    Eigen::VectorXd coef_orig(p);
     if (standardize) {
         for (int j = 0; j < p; ++j) {
             coef_orig(j) = beta(j) / x_std(j);
@@ -107,17 +104,4 @@ LassoResult fit_lasso_cd(
     return res;
 }
 
-namespace py = pybind11;
-
-PYBIND11_MODULE(statelix_lasso, m) {
-    py::class_<LassoResult>(m, "LassoResult")
-        .def_readonly("coef", &LassoResult::coef)
-        .def_readonly("intercept", &LassoResult::intercept)
-        .def_readonly("iterations", &LassoResult::iterations)
-        .def_readonly("converged", &LassoResult::converged);
-
-    m.def("fit_lasso_cd", &fit_lasso_cd,
-          "Fit Lasso via coordinate descent (standardize by default)",
-          py::arg("X"), py::arg("y"), py::arg("lambda"),
-          py::arg("max_iter") = 1000, py::arg("tol") = 1e-6, py::arg("standardize") = true);
-}
+} // namespace statelix

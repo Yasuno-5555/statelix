@@ -229,8 +229,10 @@ public:
         double sst = (Y.array() - Y.mean()).square().sum();
         result.r_squared = 1.0 - sse / sst;
         
-        // Parallel trends test (simplified: just check pre-period difference)
-        result.parallel_trends_valid = true;  // Would need multiple pre-periods
+        // Parallel trends test (simplified: basic 2x2 cannot test this)
+        // We assume it holds by default (untestable without pre-periods).
+        // Use fit_with_pretest() if pre-treatment data is available.
+        result.parallel_trends_valid = true; 
         result.pre_trend_diff = 0.0;
         result.pre_trend_pvalue = 1.0;
         
@@ -588,7 +590,9 @@ private:
         result.n_treatment_cohorts = cohorts.size();
         result.has_staggered_adoption = (cohorts.size() > 1);
         result.twfe_potentially_biased = result.has_staggered_adoption;
-        result.bacon_weight_negative = 0.0;  // Would need full decomposition
+        // Requires full Goodman-Bacon decomposition to calculate weights accurately.
+        // This is a placeholder for future implementation.
+        result.bacon_weight_negative = 0.0; 
     }
     
     // Cluster-robust variance (Liang-Zeger)

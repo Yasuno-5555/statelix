@@ -44,6 +44,7 @@ set(CORE_SOURCES
     src/search/kdtree.cpp
     src/time_series/cpd.cpp
     src/time_series/kalman.cpp
+    src/linear_model/poisson.cpp
     src/spatial/icp.cpp
     src/signal/wavelet.cpp
     src/ml/gbdt.cpp
@@ -77,6 +78,20 @@ set(CORE_HEADERS
     src/glm/glm_base.h
     src/glm/glm_solver.h
     src/glm/glm_legacy.h
+    # v2.3 Econometrics
+    src/panel/panel.h
+    src/time_series/var.h
+    src/time_series/garch.h
+    src/time_series/cointegration.h
+    src/stats/tests.h
+    src/causal/rdd.h
+    src/causal/psm.h
+    src/glm/discrete_choice.h
+    src/glm/zero_inflated.h
+    src/causal/synthetic_control.h
+    src/panel/dynamic_panel.h
+    src/spatial/spatial.h
+    src/stats/quantile_regression.h
 )
 
 # Python モジュールの作成
