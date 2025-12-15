@@ -14,13 +14,13 @@ Types if import:
 IMPORTANT: Do NOT post this list to the issue-tracker. Use it as a basis for
             tracking down the missing module yourself. Thanks!
 
-missing module named grp - imported by subprocess (delayed, conditional, optional), shutil (delayed, optional), tarfile (optional), pathlib (delayed, optional), setuptools._vendor.backports.tarfile (optional), distutils.archive_util (optional), setuptools._distutils.archive_util (optional)
-missing module named pwd - imported by posixpath (delayed, conditional), subprocess (delayed, conditional, optional), shutil (delayed, optional), tarfile (optional), pathlib (delayed, optional), http.server (delayed, optional), webbrowser (delayed), netrc (delayed, conditional), getpass (delayed), distutils.util (delayed, conditional, optional), setuptools._vendor.backports.tarfile (optional), distutils.archive_util (optional), setuptools._distutils.util (delayed, conditional, optional), setuptools._distutils.archive_util (optional)
-missing module named pep517 - imported by importlib.metadata (delayed)
 missing module named 'org.python' - imported by copy (optional), xml.sax (delayed, conditional)
 missing module named org - imported by pickle (optional)
-missing module named posix - imported by os (conditional, optional), shutil (conditional), importlib._bootstrap_external (conditional)
+missing module named pwd - imported by posixpath (delayed, conditional), shutil (delayed, optional), tarfile (optional), pathlib (delayed, optional), subprocess (delayed, conditional, optional), http.server (delayed, optional), webbrowser (delayed), netrc (delayed, conditional), getpass (delayed), distutils.util (delayed, conditional, optional), setuptools._vendor.backports.tarfile (optional), distutils.archive_util (optional), setuptools._distutils.util (delayed, conditional, optional), setuptools._distutils.archive_util (optional)
+missing module named grp - imported by shutil (delayed, optional), tarfile (optional), pathlib (delayed, optional), subprocess (delayed, conditional, optional), setuptools._vendor.backports.tarfile (optional), distutils.archive_util (optional), setuptools._distutils.archive_util (optional)
+missing module named posix - imported by shutil (conditional), importlib._bootstrap_external (conditional), os (conditional, optional)
 missing module named resource - imported by posix (top-level), numpy.linalg.tests.test_linalg (delayed, conditional)
+missing module named pep517 - imported by importlib.metadata (delayed)
 missing module named _frozen_importlib_external - imported by importlib._bootstrap (delayed), importlib (optional), importlib.abc (optional), zipimport (top-level)
 excluded module named _frozen_importlib - imported by importlib (optional), importlib.abc (optional), zipimport (top-level)
 missing module named _posixsubprocess - imported by subprocess (optional), multiprocessing.util (delayed)
@@ -307,7 +307,6 @@ missing module named collections.Mapping - imported by collections (optional), p
 missing module named UserDict - imported by pytz.lazy (optional)
 missing module named xarray - imported by pandas.tests.generic.test_to_xarray (delayed), pandas.tests.test_downstream (delayed, conditional)
 missing module named dask - imported by pandas.tests.test_downstream (delayed, conditional)
-missing module named sklearn - imported by statelix_py.models.linear (top-level), pandas.tests.test_downstream (delayed)
 missing module named 'IPython.core' - imported by pandas.io.formats.printing (delayed, conditional), pandas.conftest (delayed), pandas.tests.arrays.categorical.test_warnings (delayed), pandas.tests.frame.test_api (delayed), pandas.tests.indexes.test_base (delayed), pandas.tests.resample.test_resampler_grouper (delayed)
 missing module named 'sqlalchemy.orm' - imported by pandas.tests.io.test_sql (delayed)
 missing module named 'sqlalchemy.schema' - imported by pandas.io.sql (delayed), pandas.tests.io.test_sql (delayed)
@@ -375,6 +374,7 @@ missing module named scipy - imported by pandas.core.dtypes.common (delayed, con
 missing module named 'numba.typed' - imported by pandas.core._numba.extensions (delayed)
 missing module named 'numba.core' - imported by pandas.core._numba.extensions (top-level)
 missing module named 'traitlets.config' - imported by pandas.conftest (delayed)
+missing module named sklearn - imported by statelix_py.models.linear (top-level), C:\Users\kouno\Desktop\Projects\statelix\statelix_py\app.py (top-level), pandas.tests.test_downstream (delayed)
 missing module named statelix_py.statelix_core - imported by statelix_py (optional), statelix_py.core.cpp_binding (optional)
 missing module named statelix_core - imported by statelix_py.core.cpp_binding (optional)
 missing module named statelix_py.core.statelix_core - imported by statelix_py.core (optional)

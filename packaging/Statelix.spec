@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_all
 
 datas = []
 binaries = [('C:\\Users\\kouno\\AppData\\Local\\Programs\\Python\\Python310\\python310.dll', '.')]
-hiddenimports = ['statelix_py.models']
+hiddenimports = ['statelix_py.models', 'sklearn', 'sklearn.linear_model', 'sklearn.neighbors', 'sklearn.utils._typedefs', 'scipy.sparse.csgraph', 'scipy.special.cython_special', 'pandas', 'PySide6']
 tmp_ret = collect_all('pandas')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('numpy')

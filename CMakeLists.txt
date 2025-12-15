@@ -16,19 +16,33 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g")
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -DDEBUG")
 
-# 依存関係の検索
-find_package(Eigen3 3.3 REQUIRED NO_MODULE)
-find_package(pybind11 CONFIG)
+# 依存関係の解決 (FetchContentを使用)
+include(FetchContent)
 
-# pybind11が見つからない場合は、Pythonから取得
-if(NOT pybind11_FOUND)
-    find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
-    execute_process(
-        COMMAND "${Python3_EXECUTABLE}" -m pybind11 --cmakedir
-        OUTPUT_VARIABLE pybind11_DIR
-        OUTPUT_STRIP_TRAILING_WHITESPACE
+# Eigen3
+find_package(Eigen3 3.3 QUIET)
+if(NOT Eigen3_FOUND)
+    message(STATUS "Eigen3 not found locally. Fetching from GitLab...")
+    FetchContent_Declare(
+        Eigen3
+        GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+        GIT_TAG        3.4.0
+        SHALLOW        TRUE
     )
-    find_package(pybind11 CONFIG REQUIRED)
+    FetchContent_MakeAvailable(Eigen3)
+endif()
+
+# pybind11
+find_package(pybind11 CONFIG QUIET)
+if(NOT pybind11_FOUND)
+    message(STATUS "pybind11 not found locally. Fetching from GitHub...")
+    FetchContent_Declare(
+        pybind11
+        GIT_REPOSITORY https://github.com/pybind/pybind11.git
+        GIT_TAG        v2.11.1
+        SHALLOW        TRUE
+    )
+    FetchContent_MakeAvailable(pybind11)
 endif()
 
 # ソースファイルの収集
