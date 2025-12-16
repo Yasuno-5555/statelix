@@ -1,35 +1,11 @@
-/**
- * @file did.h
- * @brief Statelix v1.1 - Difference-in-Differences (DID) / Two-Way Fixed Effects
- * 
- * Implements:
- *   - Basic 2x2 DID (two groups, two periods)
- *   - TWFE (Two-Way Fixed Effects for staggered adoption)
- *   - Parallel trends pre-test
- *   - Event study design
- * 
- * Theory:
- * -------
- * Basic DID:
- *   Y_it = α + β₁ Post_t + β₂ Treat_i + β₃ (Post_t × Treat_i) + ε_it
- *   ATT = β₃ (Average Treatment Effect on the Treated)
- * 
- * TWFE with staggered adoption (Goodman-Bacon 2021 decomposition warning):
- *   Y_it = α_i + λ_t + δ D_it + ε_it
- *   where α_i = unit FE, λ_t = time FE, D_it = treatment indicator
- * 
- * WARNING: TWFE with heterogeneous treatment timing can produce biased
- * estimates. Consider using more robust estimators (Callaway-Sant'Anna, 
- * Sun-Abraham) for staggered designs. This implementation includes
- * diagnostics to detect potential issues.
- * 
- * Reference: 
- *   - Angrist, J.D. & Pischke, J.S. (2009). Mostly Harmless Econometrics
- *   - Goodman-Bacon, A. (2021). Difference-in-differences with variation
- *     in treatment timing. Journal of Econometrics, 225(2), 254-277.
- */
-#ifndef STATELIX_DID_H
-#define STATELIX_DID_H
+#pragma once
+
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -39,6 +15,9 @@
 #include <cmath>
 #include <algorithm>
 #include <stdexcept>
+#include <string>
+#include "../linear_model/solver.h"
+#include "../stats/math_utils.h"
 
 namespace statelix {
 
@@ -54,7 +33,7 @@ struct DIDResult {
     double att;                     // Treatment effect (Post × Treat coefficient)
     double att_std_error;
     double t_stat;
-    double p_value;
+    double pvalue;
     double conf_lower;
     double conf_upper;
     
@@ -88,7 +67,7 @@ struct TWFEResult {
     double delta;                   // Treatment effect estimate
     double delta_std_error;
     double t_stat;
-    double p_value;
+    double pvalue;
     double conf_lower;
     double conf_upper;
     
@@ -189,10 +168,16 @@ public:
         X.col(2) = treated.cast<double>();               // Treat
         X.col(3) = (post.array() * treated.array()).cast<double>();  // Interaction
         
-        // OLS estimation
-        Eigen::MatrixXd XtX = X.transpose() * X;
-        Eigen::MatrixXd XtX_inv = XtX.ldlt().solve(Eigen::MatrixXd::Identity(4, 4));
-        result.coef = XtX_inv * X.transpose() * Y;
+        // OLS estimation with WeightedSolver
+        Eigen::VectorXd w = Eigen::VectorXd::Ones(n);
+        WeightedDesignMatrix wdm(X, w);
+        WeightedSolver solver(SolverStrategy::AUTO);
+        
+        try {
+            result.coef = solver.solve(wdm, Y);
+        } catch (const std::exception& e) {
+            throw std::runtime_error("DID estimation failed: " + std::string(e.what()));
+        }
         
         // ATT is the interaction coefficient
         result.att = result.coef(3);
@@ -203,25 +188,34 @@ public:
         
         double sse = result.residuals.squaredNorm();
         int df = n - 4;
-        double sigma2 = sse / df;
         
-        Eigen::MatrixXd vcov;
+        // Solver variance_covariance() returns (X'X)^-1 (unscaled)
+        // So vcov_solver IS XtX_inv
+        Eigen::MatrixXd vcov_solver = solver.variance_covariance();
+        Eigen::MatrixXd XtX_inv = vcov_solver;
+        
         if (robust_se) {
-            vcov = compute_robust_vcov(X, result.residuals, XtX_inv);
+            result.std_errors.resize(4);
+            // Robust Sandwich
+            Eigen::MatrixXd meat = Eigen::MatrixXd::Zero(4, 4);
+            for (int i=0; i<n; ++i) {
+                Eigen::VectorXd xi = X.row(i).transpose();
+                meat += result.residuals(i) * result.residuals(i) * xi * xi.transpose();
+            }
+            Eigen::MatrixXd vcov_robust = XtX_inv * meat * XtX_inv;
+            for (int j=0; j<4; ++j) result.std_errors(j) = std::sqrt(vcov_robust(j,j));
         } else {
-            vcov = sigma2 * XtX_inv;
-        }
-        
-        result.std_errors.resize(4);
-        for (int j = 0; j < 4; ++j) {
-            result.std_errors(j) = std::sqrt(vcov(j, j));
+            result.std_errors.resize(4);
+            for(int j=0; j<4; ++j) {
+                result.std_errors(j) = std::sqrt(vcov_solver(j,j)); 
+            }
         }
         
         result.att_std_error = result.std_errors(3);
         result.t_stat = result.att / result.att_std_error;
-        result.p_value = 2.0 * (1.0 - t_cdf(std::abs(result.t_stat), df));
+        result.pvalue = 2.0 * (1.0 - statelix::stats::t_cdf(std::abs(result.t_stat), df));
         
-        double t_crit = t_quantile(1.0 - (1.0 - conf_level) / 2.0, df);
+        double t_crit = statelix::stats::t_quantile(1.0 - (1.0 - conf_level) / 2.0, df);
         result.conf_lower = result.att - t_crit * result.att_std_error;
         result.conf_upper = result.att + t_crit * result.att_std_error;
         
@@ -229,9 +223,6 @@ public:
         double sst = (Y.array() - Y.mean()).square().sum();
         result.r_squared = 1.0 - sse / sst;
         
-        // Parallel trends test (simplified: basic 2x2 cannot test this)
-        // We assume it holds by default (untestable without pre-periods).
-        // Use fit_with_pretest() if pre-treatment data is available.
         result.parallel_trends_valid = true; 
         result.pre_trend_diff = 0.0;
         result.pre_trend_pvalue = 1.0;
@@ -283,17 +274,22 @@ public:
                 X_pre(i, 2) = time(idx) * treated(idx);  // time × treat
             }
             
-            Eigen::MatrixXd XtX = X_pre.transpose() * X_pre;
-            Eigen::MatrixXd XtX_inv = XtX.ldlt().solve(Eigen::MatrixXd::Identity(3, 3));
-            Eigen::VectorXd beta = XtX_inv * X_pre.transpose() * Y_pre;
+            // WeightedSolver for pre-trend test
+            Eigen::VectorXd w_pre = Eigen::VectorXd::Ones(n_pre);
+            WeightedDesignMatrix wdm_pre(X_pre, w_pre);
+            WeightedSolver solver_pre(SolverStrategy::AUTO);
+            Eigen::VectorXd beta = solver_pre.solve(wdm_pre, Y_pre);
             
             Eigen::VectorXd resid = Y_pre - X_pre * beta;
-            double sigma2 = resid.squaredNorm() / (n_pre - 3);
+            double sigma2_pre = resid.squaredNorm() / (n_pre - 3);
+            
+            // Solver returns Unscaled (X'X)^-1
+            Eigen::MatrixXd XtX_inv_pre = solver_pre.variance_covariance();
             
             result.pre_trend_diff = beta(2);  // time × treat coefficient
-            double se = std::sqrt(sigma2 * XtX_inv(2, 2));
+            double se = std::sqrt(sigma2_pre * XtX_inv_pre(2, 2));
             double t = result.pre_trend_diff / se;
-            result.pre_trend_pvalue = 2.0 * (1.0 - t_cdf(std::abs(t), n_pre - 3));
+            result.pre_trend_pvalue = 2.0 * (1.0 - statelix::stats::t_cdf(std::abs(t), n_pre - 3));
             result.parallel_trends_valid = (result.pre_trend_pvalue > 0.05);
         }
         
@@ -314,72 +310,7 @@ private:
         }
         return XtX_inv * meat * XtX_inv;
     }
-    
-    static double t_cdf(double t, int df) {
-        if (df > 100) {
-            return 0.5 * (1.0 + std::erf(t / std::sqrt(2.0)));
-        }
-        double x = df / (df + t * t);
-        return 0.5 + 0.5 * std::copysign(1.0, t) * (1.0 - beta_inc(df / 2.0, 0.5, x));
-    }
-    
-    static double t_quantile(double p, int df) {
-        double t = (p > 0.5) ? std::sqrt(2.0) * erfinv(2.0 * p - 1.0) : 
-                               -std::sqrt(2.0) * erfinv(1.0 - 2.0 * p);
-        for (int i = 0; i < 5; ++i) {
-            double cdf = t_cdf(t, df);
-            double pdf = std::tgamma((df + 1.0) / 2.0) / 
-                        (std::sqrt(df * M_PI) * std::tgamma(df / 2.0)) *
-                        std::pow(1.0 + t * t / df, -(df + 1.0) / 2.0);
-            t -= (cdf - p) / pdf;
-        }
-        return t;
-    }
-    
-    static double erfinv(double x) {
-        double w = -std::log((1 - x) * (1 + x));
-        double p;
-        if (w < 5.0) {
-            w -= 2.5;
-            p = 2.81022636e-08 + w * (3.43273939e-07 + w * (-3.5233877e-06 +
-                w * (-4.39150654e-06 + w * (0.00021858087 + w * (-0.00125372503 +
-                w * (-0.00417768164 + w * (0.246640727 + w * 0.115956309)))))));
-        } else {
-            w = std::sqrt(w) - 3.0;
-            p = -0.000200214257 + w * (0.000100950558 + w * (0.00134934322 +
-                w * (-0.00367342844 + w * (0.00573950773 + w * (-0.0076224613 +
-                w * (0.00943887047 + w * (1.00167406 + w * 0.00282095556)))))));
-        }
-        return p * x;
-    }
-    
-    static double beta_inc(double a, double b, double x) {
-        if (x <= 0) return 0.0;
-        if (x >= 1) return 1.0;
-        double bt = std::exp(std::lgamma(a + b) - std::lgamma(a) - std::lgamma(b) +
-                            a * std::log(x) + b * std::log(1.0 - x));
-        if (x < (a + 1.0) / (a + b + 2.0)) {
-            return bt * beta_cf(a, b, x) / a;
-        }
-        return 1.0 - bt * beta_cf(b, a, 1.0 - x) / b;
-    }
-    
-    static double beta_cf(double a, double b, double x) {
-        double am = 1, bm = 1, az = 1;
-        double qab = a + b, qap = a + 1, qam = a - 1;
-        double bz = 1.0 - qab * x / qap;
-        for (int m = 1; m <= 100; ++m) {
-            double em = m;
-            double d = em * (b - m) * x / ((qam + 2*em) * (a + 2*em));
-            double ap = az + d * am, bp = bz + d * bm;
-            d = -(a + em) * (qab + em) * x / ((a + 2*em) * (qap + 2*em));
-            double app = ap + d * az, bpp = bp + d * bz;
-            double aold = az;
-            am = ap / bpp; bm = bp / bpp; az = app / bpp; bz = 1.0;
-            if (std::abs(az - aold) < 1e-10 * std::abs(az)) break;
-        }
-        return az;
-    }
+    // removed local static math functions
 };
 
 // =============================================================================
@@ -456,10 +387,21 @@ public:
         X.col(0) = D_demean;
         if (k > 0) X.rightCols(k) = X_demean;
         
-        // OLS on demeaned data
-        Eigen::MatrixXd XtX = X.transpose() * X;
-        Eigen::MatrixXd XtX_inv = XtX.ldlt().solve(Eigen::MatrixXd::Identity(p, p));
-        Eigen::VectorXd beta = XtX_inv * X.transpose() * Y_demean;
+        // OLS on demeaned data using WeightedSolver
+        Eigen::VectorXd w_vec = Eigen::VectorXd::Ones(n);
+        WeightedDesignMatrix wdm(X, w_vec);
+        WeightedSolver solver(SolverStrategy::AUTO);
+        
+        Eigen::VectorXd beta;
+        try {
+            beta = solver.solve(wdm, Y_demean);
+        } catch (const std::exception& e) {
+             throw std::runtime_error("TWFE estimation failed: " + std::string(e.what()));
+        }
+
+        // Solver variance_covariance() returns (X'X)^-1
+        Eigen::MatrixXd vcov_solver = solver.variance_covariance();
+        Eigen::MatrixXd XtX_inv = vcov_solver;
         
         result.delta = beta(0);
         if (k > 0) result.controls_coef = beta.segment(1, k);
@@ -486,9 +428,9 @@ public:
         result.t_stat = result.delta / result.delta_std_error;
         
         int df_t = cluster_se ? result.n_units - 1 : df;
-        result.p_value = 2.0 * (1.0 - t_cdf(std::abs(result.t_stat), df_t));
+        result.pvalue = 2.0 * (1.0 - statelix::stats::t_cdf(std::abs(result.t_stat), df_t));
         
-        double t_crit = t_quantile(1.0 - (1.0 - conf_level) / 2.0, df_t);
+        double t_crit = statelix::stats::t_quantile(1.0 - (1.0 - conf_level) / 2.0, df_t);
         result.conf_lower = result.delta - t_crit * result.delta_std_error;
         result.conf_upper = result.delta + t_crit * result.delta_std_error;
         
@@ -669,72 +611,6 @@ private:
         result.unit_fe = result.unit_fe.array() / unit_count.cast<double>().array();
         result.time_fe = result.time_fe.array() / time_count.cast<double>().array();
     }
-    
-    static double t_cdf(double t, int df) {
-        if (df > 100) return 0.5 * (1.0 + std::erf(t / std::sqrt(2.0)));
-        double x = df / (df + t * t);
-        return 0.5 + 0.5 * std::copysign(1.0, t) * (1.0 - beta_inc(df / 2.0, 0.5, x));
-    }
-    
-    static double t_quantile(double p, int df) {
-        double t = (p > 0.5) ? std::sqrt(2.0) * erfinv(2.0 * p - 1.0) : 
-                               -std::sqrt(2.0) * erfinv(1.0 - 2.0 * p);
-        for (int i = 0; i < 5; ++i) {
-            double cdf = t_cdf(t, df);
-            double pdf = std::tgamma((df + 1.0) / 2.0) / 
-                        (std::sqrt(df * M_PI) * std::tgamma(df / 2.0)) *
-                        std::pow(1.0 + t * t / df, -(df + 1.0) / 2.0);
-            t -= (cdf - p) / pdf;
-        }
-        return t;
-    }
-    
-    static double erfinv(double x) {
-        double w = -std::log((1 - x) * (1 + x));
-        double p;
-        if (w < 5.0) {
-            w -= 2.5;
-            p = 2.81022636e-08 + w * (3.43273939e-07 + w * (-3.5233877e-06 +
-                w * (-4.39150654e-06 + w * (0.00021858087 + w * (-0.00125372503 +
-                w * (-0.00417768164 + w * (0.246640727 + w * 0.115956309)))))));
-        } else {
-            w = std::sqrt(w) - 3.0;
-            p = -0.000200214257 + w * (0.000100950558 + w * (0.00134934322 +
-                w * (-0.00367342844 + w * (0.00573950773 + w * (-0.0076224613 +
-                w * (0.00943887047 + w * (1.00167406 + w * 0.00282095556)))))));
-        }
-        return p * x;
-    }
-    
-    static double beta_inc(double a, double b, double x) {
-        if (x <= 0) return 0.0;
-        if (x >= 1) return 1.0;
-        double bt = std::exp(std::lgamma(a + b) - std::lgamma(a) - std::lgamma(b) +
-                            a * std::log(x) + b * std::log(1.0 - x));
-        if (x < (a + 1.0) / (a + b + 2.0)) return bt * beta_cf(a, b, x) / a;
-        return 1.0 - bt * beta_cf(b, a, 1.0 - x) / b;
-    }
-    
-    static double beta_cf(double a, double b, double x) {
-        double am = 1, bm = 1, az = 1;
-        double qab = a + b, qap = a + 1, qam = a - 1;
-        double bz = 1.0 - qab * x / qap;
-        for (int m = 1; m <= 100; ++m) {
-            double em = m;
-            double d = em * (b - m) * x / ((qam + 2*em) * (a + 2*em));
-            double ap = az + d * am, bp = bz + d * bm;
-            d = -(a + em) * (qab + em) * x / ((a + 2*em) * (qap + 2*em));
-            am = ap / (bp + d * bz); bm = bp / (bp + d * bz); 
-            az = (ap + d * az) / (bp + d * bz); bz = 1.0;
-        }
-        return az;
-    }
 };
 
 } // namespace statelix
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
-
-#endif // STATELIX_DID_H

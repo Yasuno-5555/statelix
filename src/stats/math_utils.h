@@ -55,16 +55,64 @@ namespace stats {
         return 1.0 - f_cdf(f_stat, df1, df2);
     }
 
-    // t-distribution Cumulative Distribution Function approximation
-    inline double t_cdf_approx(double t, int df) {
-        if (df > 30) {
-            // Normal approximation for large df
-            return 0.5 * (1.0 + std::erf(t / std::sqrt(2.0)));
+    
+    #ifndef M_PI
+    #define M_PI 3.14159265358979323846
+    #endif
+
+    // Inverse Error Function
+    inline double erfinv(double x) {
+        double w = -std::log((1 - x) * (1 + x));
+        double p;
+        if (w < 5.0) {
+            w -= 2.5;
+            p = 2.81022636e-08 + w * (3.43273939e-07 + w * (-3.5233877e-06 +
+                w * (-4.39150654e-06 + w * (0.00021858087 + w * (-0.00125372503 +
+                w * (-0.00417768164 + w * (0.246640727 + w * 0.115956309)))))));
+        } else {
+            w = std::sqrt(w) - 3.0;
+            p = -0.000200214257 + w * (0.000100950558 + w * (0.00134934322 +
+                w * (-0.00367342844 + w * (0.00573950773 + w * (-0.0076224613 +
+                w * (0.00943887047 + w * (1.00167406 + w * 0.00282095556)))))));
         }
-        // Simplified t-distribution approximation
-        double z = t / std::sqrt(static_cast<double>(df) / (df - 2.0));
-        return 0.5 * (1.0 + std::erf(z / std::sqrt(2.0)));
+        return p * x;
     }
+
+    // Normal CDF
+    inline double normal_cdf(double x) {
+        return 0.5 * (1.0 + std::erf(x / std::sqrt(2.0)));
+    }
+    
+    // Normal Quantile
+    inline double normal_quantile(double p) {
+        return std::sqrt(2.0) * erfinv(2.0 * p - 1.0);
+    }
+    
+    // t-distribution Cumulative Distribution Function (Robust)
+    inline double t_cdf(double t, int df) {
+        if (df > 100) return normal_cdf(t);
+        double x = df / (df + t * t);
+        return 0.5 + 0.5 * std::copysign(1.0, t) * (1.0 - beta_inc(df / 2.0, 0.5, x));
+    }
+    
+    // t-distribution Quantile
+    inline double t_quantile(double p, int df) {
+        if (df > 100) return normal_quantile(p);
+        
+        double t = (p > 0.5) ? std::sqrt(2.0) * erfinv(2.0 * p - 1.0) : 
+                               -std::sqrt(2.0) * erfinv(1.0 - 2.0 * p);
+        for (int i = 0; i < 5; ++i) {
+            double cdf_val = t_cdf(t, df);
+            double pdf = std::tgamma((df + 1.0) / 2.0) / 
+                        (std::sqrt(df * M_PI) * std::tgamma(df / 2.0)) *
+                        std::pow(1.0 + t * t / df, -(df + 1.0) / 2.0);
+            t -= (cdf_val - p) / pdf;
+        }
+        return t;
+    }
+    
+    // Alias for backward compatibility if needed, but prefer t_cdf
+    inline double t_cdf_approx(double t, int df) { return t_cdf(t, df); }
 
 } // namespace stats
 } // namespace statelix

@@ -38,6 +38,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include "../stats/math_utils.h"
+#include "../linear_model/solver.h"
 
 namespace statelix {
 
@@ -173,6 +174,12 @@ public:
      * @param Y Data matrix (T, K) where T is time periods, K is variables
      * @return VARResult containing estimated coefficients and diagnostics
      */
+    /**
+     * @brief Fit VAR(p) model
+     * 
+     * @param Y Data matrix (T, K) where T is time periods, K is variables
+     * @return VARResult containing estimated coefficients and diagnostics
+     */
     VARResult fit(const Eigen::MatrixXd& Y) {
         int T = Y.rows();
         int K = Y.cols();
@@ -210,10 +217,19 @@ public:
             Y_tilde.row(t) = Y.row(p + t);
         }
         
-        // OLS estimation: B = (Z'Z)^(-1) Z'Y
-        Eigen::MatrixXd ZtZ = Z.transpose() * Z;
-        Eigen::LDLT<Eigen::MatrixXd> ldlt(ZtZ);
-        Eigen::MatrixXd B = ldlt.solve(Z.transpose() * Y_tilde);  // (n_regressors, K)
+        // Use WeightedSolver (with identity weights)
+        // Decompose ONCE, solve K times.
+        Eigen::VectorXd w = Eigen::VectorXd::Ones(n_eff);
+        WeightedDesignMatrix wdm(Z, w);
+        WeightedSolver solver(SolverStrategy::AUTO);
+        
+        // Matrix to hold all coefficients B: (n_regressors x K)
+        Eigen::MatrixXd B(n_regressors, K);
+        
+        for (int k = 0; k < K; ++k) {
+            // solve(wdm, y) reuses decomposition after first call
+            B.col(k) = solver.solve(wdm, Y_tilde.col(k));
+        }
         
         // Extract coefficients
         int row = 0;
@@ -250,7 +266,8 @@ public:
         }
         
         // Standard errors
-        Eigen::MatrixXd ZtZ_inv = ldlt.solve(Eigen::MatrixXd::Identity(n_regressors, n_regressors));
+        // solver.variance_covariance() returns (Z'Z)^-1 (unscaled)
+        Eigen::MatrixXd ZtZ_inv = solver.variance_covariance();
         compute_standard_errors(result, ZtZ_inv, K, p);
         
         // Companion matrix and stability
@@ -275,7 +292,7 @@ public:
         
         return result;
     }
-    
+
     /**
      * @brief Compute Impulse Response Function
      * 
@@ -384,7 +401,7 @@ public:
         
         return fevd_result;
     }
-    
+
     /**
      * @brief Test Granger causality
      * 
@@ -403,6 +420,7 @@ public:
         gr.effect_var = effect;
         
         // Unrestricted model: already fitted (result)
+        // RSS_unrestricted for the specific 'effect' equation
         double rss_unrestricted = 0;
         for (int t = 0; t < result.n_effective; ++t) {
             rss_unrestricted += result.residuals(t, effect) * result.residuals(t, effect);
@@ -411,14 +429,19 @@ public:
         // Restricted model: exclude cause variable from effect equation
         // Fit a single equation with cause excluded
         int n_eff = T - p;
-        int n_regressors_restricted = 1 + p * (K - 1);  // intercept + other vars * lags
         
-        Eigen::MatrixXd Z_r(n_eff, n_regressors_restricted);
+        // Restricted design matrix
+        // Normally (Kp + 1) cols, remove p cols associated with 'cause'
+        int n_restricted_cols = 1 + p * (K - 1); // Intercept + lags of other vars
+        if (!include_intercept) n_restricted_cols -= 1;
+
+        Eigen::MatrixXd Z_r(n_eff, n_restricted_cols);
         Eigen::VectorXd y_eff(n_eff);
         
         for (int t = 0; t < n_eff; ++t) {
             int row = 0;
-            Z_r(t, row++) = 1.0;  // Intercept
+            if (include_intercept) Z_r(t, row++) = 1.0;
+            
             for (int lag = 1; lag <= p; ++lag) {
                 for (int k = 0; k < K; ++k) {
                     if (k != cause) {
@@ -429,18 +452,26 @@ public:
             y_eff(t) = Y(p + t, effect);
         }
         
-        Eigen::VectorXd beta_r = (Z_r.transpose() * Z_r).ldlt().solve(Z_r.transpose() * y_eff);
+        // New WeightedSolver for Restricted Model
+        Eigen::VectorXd w_r = Eigen::VectorXd::Ones(n_eff);
+        WeightedDesignMatrix wdm_r(Z_r, w_r);
+        WeightedSolver solver_r(SolverStrategy::AUTO);
+        
+        Eigen::VectorXd beta_r = solver_r.solve(wdm_r, y_eff);
         Eigen::VectorXd resid_r = y_eff - Z_r * beta_r;
         double rss_restricted = resid_r.squaredNorm();
         
         // F-test
         gr.df1 = p;  // Number of restrictions (p coefficients of cause)
-        gr.df2 = n_eff - (K * p + 1);  // Residual df from unrestricted
+        
+        // Unrestricted params for this equation: K*p + 1 (or K*p)
+        int num_params_unrestricted = K * p + (include_intercept ? 1 : 0);
+        gr.df2 = n_eff - num_params_unrestricted;  
         
         if (gr.df2 <= 0) gr.df2 = 1;
         
         gr.f_stat = ((rss_restricted - rss_unrestricted) / gr.df1) / (rss_unrestricted / gr.df2);
-        gr.p_value = stats::f_pvalue_approx(gr.f_stat, gr.df1, gr.df2);
+        gr.p_value = statelix::stats::f_pvalue_approx(gr.f_stat, gr.df1, gr.df2);
         gr.causes = (gr.p_value < 0.05);
         
         return gr;

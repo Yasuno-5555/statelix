@@ -9,16 +9,23 @@ vendor_dir = os.path.abspath('vendor/eigen')
 pybind_dir = pybind11.get_include()
 
 # Helper for platform specific flags
-cxx_args = ['-std=c++17', '-O2', '-D_USE_MATH_DEFINES']
-if sys.platform != 'win32':
-    cxx_args += ['-fPIC']
+# Helper for platform specific flags
+# default args
+cxx_args = ['-D_USE_MATH_DEFINES']
+
+if sys.platform == 'win32':
+    # MSVC specific flags
+    cxx_args += ['/std:c++17', '/O2', '/bigobj', '/EHsc']
+else:
+    # GCC/Clang specific flags
+    cxx_args += ['-std=c++17', '-O2', '-fPIC']
 
 # Define extensions
 ext_modules = [
-    # 1. PSM (Causal)
+    # 1. Causal Inference (IV, PSM, DiD, RDD)
     Extension(
-        'statelix.psm',
-        sources=['src/bindings/python_bindings_psm.cpp'],
+        'statelix.causal',
+        sources=['src/bindings/python_bindings_causal.cpp', 'src/linear_model/logistic.cpp'],
         include_dirs=[src_dir, vendor_dir, pybind_dir],
         extra_compile_args=cxx_args,
         language='c++'
@@ -31,22 +38,30 @@ ext_modules = [
         extra_compile_args=cxx_args,
         language='c++'
     ),
-    # 3. HMC (Bayes)
+    # 3. Bayes (HMC + VI + Models)
     Extension(
-        'statelix.hmc',
-        sources=['src/bindings/python_bindings_hmc.cpp'],
+        'statelix.bayes',
+        sources=['src/bindings/python_bindings_bayes.cpp'],
         include_dirs=[src_dir, vendor_dir, pybind_dir],
         extra_compile_args=cxx_args,
         language='c++'
     ),
-    # 4. Statelix Core (Legacy/Everything else for now)
-    # We might want to keep the main bindings too, or phase it out?
-    # User said "monolithic.so を諦める" (Give up on monolithic .so)
-    # So we should probably NOT build the main python_bindings.cpp if we are splitting.
-    # But python_bindings.cpp contains OLS, TimeSeries, etc. 
-    # For now, let's include it as 'statelix.core' but it fails to compile often.
-    # The user specifically said "3 modules are ready". 
-    # I will stick to these 3 for the "Release" of *working* stuff.
+    # 4. Time Series
+    Extension(
+        'statelix.time_series',
+        sources=['src/bindings/python_bindings_timeseries.cpp', 'src/time_series/cpd.cpp'],
+        include_dirs=[src_dir, vendor_dir, pybind_dir],
+        extra_compile_args=cxx_args,
+        language='c++'
+    ),
+    # 5. Linear Models (OLS/GLM) - Disabled due to build issues
+    # Extension(
+    #    'statelix.linear_model',
+    #    sources=['src/bindings/python_bindings_linear.cpp', 'src/linear_model/ols.cpp'],
+    #    include_dirs=[src_dir, vendor_dir, pybind_dir],
+    #    extra_compile_args=cxx_args,
+    #    language='c++'
+    # ),
 ]
 
 setup(
@@ -54,7 +69,7 @@ setup(
     version='0.1.0',
     description='High-performance C++ Stat/Econ/ML library with Python bindings',
     # Packages
-    packages=['statelix'],
+    packages=['statelix', 'statelix.inquiry', 'statelix.causal'], # Removed bayes (folder missing)
     package_dir={'statelix': 'statelix_pkg'},
     ext_modules=ext_modules,
     install_requires=['numpy>=1.21', 'pandas>=1.3', 'scikit-learn>=1.0'],

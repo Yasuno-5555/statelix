@@ -152,6 +152,15 @@ PYBIND11_MODULE(statelix_core, m) {
         .def("fit", &statelix::PanelRandomEffects::fit,
              py::arg("Y"), py::arg("X"), py::arg("unit_id"), py::arg("time_id"));
 
+    // First Difference
+    py::class_<statelix::PanelFDResult>(panel, "PanelFDResult")
+        .def_readonly("coef", &statelix::PanelFDResult::coef)
+        .def_readonly("std_errors", &statelix::PanelFDResult::std_errors);
+    py::class_<statelix::PanelFirstDifference>(panel, "FirstDifference")
+        .def(py::init<>())
+        .def("fit", &statelix::PanelFirstDifference::fit,
+             py::arg("Y"), py::arg("X"), py::arg("unit_id"), py::arg("time_id"));
+
     // --- Bayes (HMC) ---
     py::module_ bayes = m.def_submodule("bayes", "Bayesian inference");
     
