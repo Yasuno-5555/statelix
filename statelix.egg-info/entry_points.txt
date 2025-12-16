@@ -1,3 +1,0 @@
-[console_scripts]
-statelix = statelix_py.app:main
-statelix-migrate = statelix_py.utils.migration:main

@@ -1,4 +1,31 @@
+# Build Artifacts
 dist/
 build/
+*.egg-info/
 __pycache__/
+
+# Compiled Binaries
+*.so
+*.pyd
+*.dll
+*.exe
+*.o
+*.obj
+
+# Logs and Temps
+*.txt
+*.log
+.pytest_cache/
+.coverage
+htmlcov/
+tools/pip_install_log.txt
+
+# Environment
+.env
+.venv
+venv/
+.idea/
+.vscode/
+
+# Packaging
 *.spec

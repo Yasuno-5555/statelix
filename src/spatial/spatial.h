@@ -237,10 +237,13 @@ public:
         result.model_type = model;
         result.n_obs = n;
         
-        // Compute eigenvalues of W for valid range of rho
+        // Compute eigenvalues of W for valid range of rho and log-det optimizations
+        // O(N^3) one-time cost
         Eigen::EigenSolver<Eigen::MatrixXd> es(W);
-        double lambda_min = es.eigenvalues().real().minCoeff();
-        double lambda_max = es.eigenvalues().real().maxCoeff();
+        Eigen::VectorXd lambda = es.eigenvalues().real();
+        
+        double lambda_min = lambda.minCoeff();
+        double lambda_max = lambda.maxCoeff();
         double rho_min = 1.0 / lambda_min;
         double rho_max = 1.0 / lambda_max;
         
@@ -249,24 +252,145 @@ public:
         
         switch (model) {
             case SpatialModel::SAR:
-                fit_sar(y, X, W, Wy, rho_min, rho_max, result);
+                fit_sar(y, X, W, Wy, lambda, rho_min, rho_max, result);
                 break;
             case SpatialModel::SEM:
                 fit_sem(y, X, W, rho_min, rho_max, result);
                 break;
             case SpatialModel::SDM:
-                fit_sdm(y, X, W, Wy, rho_min, rho_max, result);
+                fit_sdm(y, X, W, Wy, lambda, rho_min, rho_max, result);
                 break;
             default:
-                fit_sar(y, X, W, Wy, rho_min, rho_max, result);
+                fit_sar(y, X, W, Wy, lambda, rho_min, rho_max, result);
         }
         
         // Compute effects for interpretation
         if (model == SpatialModel::SAR || model == SpatialModel::SDM) {
-            compute_effects(W, result);
+            compute_effects(lambda, result);
         }
         
         return result;
+    }
+    
+    // ... tests ...
+
+private:
+    void fit_sar(
+        const Eigen::VectorXd& y,
+        const Eigen::MatrixXd& X,
+        const Eigen::MatrixXd& W,
+        const Eigen::VectorXd& Wy,
+        const Eigen::VectorXd& lambda,
+        double rho_min,
+        double rho_max,
+        SpatialResult& result
+    ) {
+        int n = y.size();
+        int k = X.cols();
+        
+        // Optimize rho using pre-computed eigenvalues
+        result.rho = optimize_rho_sar_eigen(y, X, W, Wy, lambda, rho_min, rho_max);
+        
+        // ... rest same as before ...
+        // Final estimates
+        Eigen::VectorXd y_star = y - result.rho * Wy;
+        result.beta = (X.transpose() * X).ldlt().solve(X.transpose() * y_star);
+        
+        result.residuals = y_star - X * result.beta;
+        result.sigma2 = result.residuals.squaredNorm() / n;
+        
+        result.fitted_values = result.rho * Wy + X * result.beta;
+        
+        compute_sar_standard_errors(y, X, W, result);
+        
+        // Log-likelihood using eigenvalues
+        double log_det = 0;
+        for(int i=0; i<n; ++i) log_det += std::log(1.0 - result.rho * lambda(i));
+        
+        result.log_likelihood = -n/2.0 * std::log(2*M_PI*result.sigma2) + log_det -
+                                 result.residuals.squaredNorm() / (2 * result.sigma2);
+        
+        result.n_params = k + 2;
+        result.aic = -2 * result.log_likelihood + 2 * result.n_params;
+        result.bic = -2 * result.log_likelihood + result.n_params * std::log(n);
+        
+        // Coefficients
+        result.coef.resize(k + 1);
+        result.coef(0) = result.rho;
+        result.coef.tail(k) = result.beta;
+        
+        result.std_errors.resize(k + 1);
+        result.std_errors(0) = result.rho_se;
+        result.std_errors.tail(k) = result.beta_se;
+        
+        result.z_values = result.coef.array() / result.std_errors.array();
+        result.p_values.resize(k + 1);
+        for (int j = 0; j <= k; ++j) {
+            result.p_values(j) = 2 * (1 - normal_cdf(std::abs(result.z_values(j))));
+        }
+        
+        result.converged = true;
+        result.lambda = 0;
+    }
+    
+    // ... optimize_rho_sar_eigen ... (already optimized)
+
+    void fit_sdm(
+        const Eigen::VectorXd& y,
+        const Eigen::MatrixXd& X,
+        const Eigen::MatrixXd& W,
+        const Eigen::VectorXd& Wy,
+        const Eigen::VectorXd& lambda,
+        double rho_min,
+        double rho_max,
+        SpatialResult& result
+    ) {
+        int n = y.size();
+        int k = X.cols();
+        
+        Eigen::MatrixXd WX = W * X;
+        Eigen::MatrixXd X_aug(n, 2 * k);
+        X_aug.leftCols(k) = X;
+        X_aug.rightCols(k) = WX;
+        
+        // Pass lambda to SAR fit
+        Eigen::VectorXd Wy_copy = Wy;
+        fit_sar(y, X_aug, W, Wy_copy, lambda, rho_min, rho_max, result);
+        
+        Eigen::VectorXd beta_full = result.beta;
+        result.beta = beta_full.head(k);
+        result.theta = beta_full.tail(k);
+        
+        result.beta_se = result.std_errors.segment(1, k);
+        result.theta_se = result.std_errors.tail(k);
+        
+        result.model_type = SpatialModel::SDM;
+    }
+
+    void compute_effects(const Eigen::VectorXd& lambda, SpatialResult& result) {
+        int n = lambda.size();
+        int k = result.beta.size();
+        
+        result.direct_effects.resize(k);
+        result.indirect_effects.resize(k);
+        result.total_effects.resize(k);
+        
+        // Calculate trace of (I - rho*W)^-1 = sum(1/(1-rho*lambda_i))
+        double tr_S = 0;
+        for(int i=0; i<n; ++i) {
+            tr_S += 1.0 / (1.0 - result.rho * lambda(i));
+        }
+        double avg_direct = tr_S / n;
+        
+        // Average total depends on row-standardization
+        // If row-stnd, 1/(1-rho)
+        double avg_total = 1.0 / (1.0 - result.rho);
+        
+        for (int j = 0; j < k; ++j) {
+            result.direct_effects(j) = result.beta(j) * avg_direct;
+            result.total_effects(j) = result.beta(j) * avg_total;
+            result.indirect_effects(j) = result.total_effects(j) - result.direct_effects(j);
+        }
     }
     
     /**
@@ -397,10 +521,15 @@ private:
         int n = y.size();
         int k = X.cols();
         
-        // Concentrated log-likelihood: optimize over rho only
-        result.rho = optimize_rho_sar(y, X, W, Wy, rho_min, rho_max);
+        // Ord (1975): Use eigenvalues for log-det
+        // O(N^3) one-time cost, then O(N) per iteration
+        Eigen::VectorXcd eig = W.eigenvalues();
+        Eigen::VectorXd lambda = eig.real(); // Assume W is similar to symmetric or real eig
         
-        // Given optimal rho, compute beta
+        // Optimize rho
+        result.rho = optimize_rho_sar_eigen(y, X, W, Wy, lambda, rho_min, rho_max);
+        
+        // Final estimates
         Eigen::VectorXd y_star = y - result.rho * Wy;
         result.beta = (X.transpose() * X).ldlt().solve(X.transpose() * y_star);
         
@@ -409,20 +538,21 @@ private:
         
         result.fitted_values = result.rho * Wy + X * result.beta;
         
-        // Standard errors (from inverse Hessian)
+        // Standard errors
         compute_sar_standard_errors(y, X, W, result);
         
         // Log-likelihood
-        Eigen::MatrixXd I_rhoW = Eigen::MatrixXd::Identity(n, n) - result.rho * W;
-        double log_det = std::log(std::abs(I_rhoW.determinant()));
+        double log_det = 0;
+        for(int i=0; i<n; ++i) log_det += std::log(1.0 - result.rho * lambda(i));
+        
         result.log_likelihood = -n/2.0 * std::log(2*M_PI*result.sigma2) + log_det -
                                  result.residuals.squaredNorm() / (2 * result.sigma2);
         
-        result.n_params = k + 2;  // beta + rho + sigma2
+        result.n_params = k + 2;
         result.aic = -2 * result.log_likelihood + 2 * result.n_params;
         result.bic = -2 * result.log_likelihood + result.n_params * std::log(n);
         
-        // Combine coefficients
+        // Coefficients
         result.coef.resize(k + 1);
         result.coef(0) = result.rho;
         result.coef.tail(k) = result.beta;
@@ -440,18 +570,18 @@ private:
         result.converged = true;
         result.lambda = 0;
     }
-    
-    double optimize_rho_sar(
+
+    double optimize_rho_sar_eigen(
         const Eigen::VectorXd& y,
         const Eigen::MatrixXd& X,
         const Eigen::MatrixXd& W,
         const Eigen::VectorXd& Wy,
+        const Eigen::VectorXd& lambda,
         double rho_min,
         double rho_max
     ) {
         int n = y.size();
         
-        // Golden section search
         double a = std::max(-0.999, rho_min + 0.001);
         double b = std::min(0.999, rho_max - 0.001);
         double gr = (std::sqrt(5) - 1) / 2;
@@ -459,14 +589,32 @@ private:
         double c = b - gr * (b - a);
         double d = a + gr * (b - a);
         
+        // Pre-compute projections
+        // M = I - X(X'X)^-1 X'
+        // We only need e = My and e_L = MWy
+        // M projects onto orthogonal complement of X
+        // beta_0 = (X'X)^-1 X'y, e_0 = y - X*beta_0
+        // beta_L = (X'X)^-1 X'Wy, e_L = Wy - X*beta_L
+        // resid(rho) = e_0 - rho * e_L
+        
+        Eigen::VectorXd beta_0 = (X.transpose() * X).ldlt().solve(X.transpose() * y);
+        Eigen::VectorXd e_0 = y - X * beta_0;
+        
+        Eigen::VectorXd beta_L = (X.transpose() * X).ldlt().solve(X.transpose() * Wy);
+        Eigen::VectorXd e_L = Wy - X * beta_L;
+        
         auto conc_ll = [&](double rho) {
-            Eigen::VectorXd y_star = y - rho * Wy;
-            Eigen::VectorXd beta = (X.transpose() * X).ldlt().solve(X.transpose() * y_star);
-            Eigen::VectorXd resid = y_star - X * beta;
-            double s2 = resid.squaredNorm() / n;
+            // Check determinant condition first
+            double log_det = 0;
+            for(int i=0; i<n; ++i) {
+                double val = 1.0 - rho * lambda(i);
+                if (val <= 0) return -1e9; // Invalid rho
+                log_det += std::log(val);
+            }
             
-            Eigen::MatrixXd I_rhoW = Eigen::MatrixXd::Identity(n, n) - rho * W;
-            double log_det = std::log(std::abs(I_rhoW.determinant()));
+            // Concentrated sigma^2
+            Eigen::VectorXd e = e_0 - rho * e_L;
+            double s2 = e.squaredNorm() / n;
             
             return -n/2.0 * std::log(s2) + log_det;
         };
@@ -478,15 +626,11 @@ private:
             if (std::abs(b - a) < tol) break;
             
             if (fc > fd) {
-                b = d;
-                d = c;
-                fd = fc;
+                b = d; d = c; fd = fc;
                 c = b - gr * (b - a);
                 fc = conc_ll(c);
             } else {
-                a = c;
-                c = d;
-                fc = fd;
+                a = c; c = d; fc = fd;
                 d = a + gr * (b - a);
                 fd = conc_ll(d);
             }
@@ -611,8 +755,8 @@ private:
         double rho_max,
         SpatialResult& result
     ) {
-        int n = y.size();
-        int k = X.cols();
+        int n = (int)y.size();
+        int k = (int)X.cols();
         
         // SDM: y = ρWy + Xβ + WXθ + ε
         // Augment X with WX

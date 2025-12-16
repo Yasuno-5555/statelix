@@ -4,17 +4,35 @@
  * 
  * Implements:
  *   - Power iteration PageRank
- *   - Personalized PageRank
- *   - Sparse matrix × vector benchmark
+ *   - Personalized PageRank (PPR)
+ *   - Sparse matrix × vector operations
  * 
  * Algorithm:
  * ----------
- * Standard PageRank:
- *   r = d * M * r + (1 - d) * v
+ * Standard PageRank (Google variant):
+ *   r = d * M * r + d * (dangling_sum / n) * 1 + (1 - d) * v
  * where:
  *   M = column-normalized adjacency (transition matrix)
  *   d = damping factor (typically 0.85)
  *   v = personalization vector (uniform by default)
+ *   dangling_sum = sum of rank mass on dangling nodes
+ * 
+ * Dangling Nodes Handling:
+ * ------------------------
+ * For standard PageRank, dangling nodes (no outgoing edges) redistribute
+ * their rank uniformly to all nodes (Google's approach).
+ * 
+ * For Personalized PageRank (PPR), there are two common variants:
+ *   - Dangling → uniform (this implementation)
+ *   - Dangling → personalization vector (alternative)
+ * This implementation uses dangling → uniform for standard and
+ * dangling → personalization for PPR (Page et al. original).
+ * 
+ * Graph Type:
+ * -----------
+ * This implementation assumes a DIRECTED graph. For undirected graphs,
+ * the input adjacency matrix should be symmetric (A_ij = A_ji).
+ * The transition matrix M is column-normalized (column-stochastic).
  * 
  * Reference: Page, L. et al. (1999). The PageRank Citation Ranking:
  *            Bringing Order to the Web. Stanford InfoLab.
@@ -26,7 +44,9 @@
 #include <Eigen/Dense>
 #include <vector>
 #include <cmath>
+#include <cmath>
 #include <algorithm>
+#include <numeric>
 #include <stdexcept>
 
 namespace statelix {
@@ -61,10 +81,17 @@ public:
     double tol = 1e-6;
     bool normalize_output = true;   // Scores sum to 1
     
+    // Dangling node handling strategy
+    enum class DanglingStrategy {
+        UNIFORM,         // Distribute to all nodes uniformly (Google standard)
+        PERSONALIZATION  // Distribute according to personalization vector
+    };
+    DanglingStrategy dangling_strategy = DanglingStrategy::UNIFORM;
+    
     /**
      * @brief Compute PageRank scores
      * 
-     * @param adjacency Sparse adjacency matrix (directed or undirected)
+     * @param adjacency Sparse adjacency matrix (directed graph, A_ij = edge i→j)
      * @return PageRankResult with scores and ranking
      */
     PageRankResult compute(const Eigen::SparseMatrix<double>& adjacency) {
@@ -73,70 +100,10 @@ public:
             throw std::invalid_argument("Adjacency matrix must be square");
         }
         
-        PageRankResult result;
-        result.scores.resize(n);
-        
-        if (n == 0) {
-            result.converged = true;
-            result.iterations = 0;
-            result.residual = 0;
-            return result;
-        }
-        
-        // Build column-normalized transition matrix
-        // M_ij = A_ij / out_degree(j)
-        Eigen::SparseMatrix<double> M = build_transition_matrix(adjacency);
-        
-        // Uniform personalization
+        // Uniform personalization for standard PageRank
         Eigen::VectorXd personalization = Eigen::VectorXd::Constant(n, 1.0 / n);
         
-        // Power iteration
-        Eigen::VectorXd r = personalization;  // Initial: uniform
-        Eigen::VectorXd r_new(n);
-        
-        for (int iter = 0; iter < max_iter; ++iter) {
-            // r_new = d * M * r + (1 - d) * personalization
-            r_new = damping * (M * r) + (1.0 - damping) * personalization;
-            
-            // Handle dangling nodes (no outgoing edges)
-            double dangling_sum = 0.0;
-            for (int i = 0; i < n; ++i) {
-                if (out_degree_[i] == 0) {
-                    dangling_sum += r(i);
-                }
-            }
-            r_new.array() += damping * dangling_sum / n;
-            
-            // Check convergence
-            double residual = (r_new - r).norm();
-            
-            if (residual < tol) {
-                result.scores = r_new;
-                result.iterations = iter + 1;
-                result.converged = true;
-                result.residual = residual;
-                break;
-            }
-            
-            r = r_new;
-            result.iterations = iter + 1;
-            result.converged = false;
-            result.residual = residual;
-        }
-        
-        if (!result.converged) {
-            result.scores = r_new;
-        }
-        
-        // Normalize
-        if (normalize_output) {
-            result.scores /= result.scores.sum();
-        }
-        
-        // Compute ranking
-        result.ranking = compute_ranking(result.scores);
-        
-        return result;
+        return compute_internal(adjacency, personalization, DanglingStrategy::UNIFORM);
     }
     
     /**
@@ -166,37 +133,82 @@ public:
             personalization.setConstant(1.0 / n);
         }
         
-        // Compute with modified damping
+        // Save and modify damping
         double saved_damping = damping;
         damping = 1.0 - restart_prob;
         
-        auto result = compute_with_personalization(adjacency, personalization);
+        // For PPR, dangling nodes go to personalization vector (Page et al.)
+        auto result = compute_internal(adjacency, personalization, 
+                                        DanglingStrategy::PERSONALIZATION);
         
         damping = saved_damping;
         return result;
     }
+    
+    /**
+     * @brief Personalized PageRank with custom personalization vector
+     * 
+     * @param adjacency Adjacency matrix
+     * @param personalization Custom personalization vector (will be normalized)
+     * @param use_personalization_for_dangling If true, dangling nodes use 
+     *        personalization vector; otherwise uniform
+     */
+    PageRankResult compute_personalized(
+        const Eigen::SparseMatrix<double>& adjacency,
+        Eigen::VectorXd personalization,
+        bool use_personalization_for_dangling = true
+    ) {
+        // Normalize personalization
+        double sum = personalization.sum();
+        if (sum > 0) {
+            personalization /= sum;
+        } else {
+            int n = adjacency.rows();
+            personalization = Eigen::VectorXd::Constant(n, 1.0 / n);
+        }
+        
+        DanglingStrategy strategy = use_personalization_for_dangling 
+            ? DanglingStrategy::PERSONALIZATION 
+            : DanglingStrategy::UNIFORM;
+        
+        return compute_internal(adjacency, personalization, strategy);
+    }
 
 private:
     std::vector<double> out_degree_;
+    std::vector<int> dangling_nodes_;  // Cache dangling node indices
     
     /**
      * @brief Build column-normalized transition matrix
+     * 
+     * M_ij = A_ij / out_degree(j)
+     * Columns with zero out-degree are left as zero (handled separately).
      */
     Eigen::SparseMatrix<double> build_transition_matrix(
         const Eigen::SparseMatrix<double>& A
     ) {
         int n = A.rows();
         
-        // Compute out-degrees
-        out_degree_.resize(n, 0.0);
+        // Compute out-degrees (column sums for column-stochastic)
+        out_degree_.assign(n, 0.0);
+        dangling_nodes_.clear();
+        
         for (int j = 0; j < A.outerSize(); ++j) {
             for (Eigen::SparseMatrix<double>::InnerIterator it(A, j); it; ++it) {
                 out_degree_[j] += it.value();
             }
         }
         
+        // Identify dangling nodes
+        for (int j = 0; j < n; ++j) {
+            if (out_degree_[j] == 0.0) {
+                dangling_nodes_.push_back(j);
+            }
+        }
+        
         // Build normalized matrix (column-stochastic)
         std::vector<Eigen::Triplet<double>> triplets;
+        triplets.reserve(A.nonZeros());
         
         for (int j = 0; j < A.outerSize(); ++j) {
             if (out_degree_[j] > 0) {
@@ -204,6 +216,7 @@ private:
                     triplets.emplace_back(it.row(), j, it.value() / out_degree_[j]);
                 }
             }
+            // Dangling nodes: column remains zero (handled in power iteration)
         }
         
         Eigen::SparseMatrix<double> M(n, n);
@@ -213,35 +226,54 @@ private:
     }
     
     /**
-     * @brief Compute with custom personalization vector
+     * @brief Internal power iteration implementation
      */
-    PageRankResult compute_with_personalization(
+    PageRankResult compute_internal(
         const Eigen::SparseMatrix<double>& adjacency,
-        const Eigen::VectorXd& personalization
+        const Eigen::VectorXd& personalization,
+        DanglingStrategy dangling_strat
     ) {
         int n = adjacency.rows();
         
         PageRankResult result;
         result.scores.resize(n);
         
+        if (n == 0) {
+            result.converged = true;
+            result.iterations = 0;
+            result.residual = 0;
+            return result;
+        }
+        
+        // Build column-normalized transition matrix
         Eigen::SparseMatrix<double> M = build_transition_matrix(adjacency);
         
-        Eigen::VectorXd r = personalization;
+        // Dangling distribution vector
+        Eigen::VectorXd dangling_dist(n);
+        if (dangling_strat == DanglingStrategy::UNIFORM) {
+            dangling_dist.setConstant(1.0 / n);
+        } else {
+            dangling_dist = personalization;
+        }
+        
+        // Power iteration
+        Eigen::VectorXd r = personalization;  // Initial: personalization
         Eigen::VectorXd r_new(n);
         
         for (int iter = 0; iter < max_iter; ++iter) {
-            r_new = damping * (M * r) + (1.0 - damping) * personalization;
-            
-            // Handle dangling nodes
+            // Compute dangling mass
             double dangling_sum = 0.0;
-            for (int i = 0; i < n; ++i) {
-                if (out_degree_[i] == 0) {
-                    dangling_sum += r(i);
-                }
+            for (int j : dangling_nodes_) {
+                dangling_sum += r(j);
             }
-            r_new += damping * dangling_sum * personalization;
             
-            double residual = (r_new - r).norm();
+            // r_new = d * M * r + d * dangling_sum * dangling_dist + (1 - d) * personalization
+            r_new = damping * (M * r);
+            r_new += damping * dangling_sum * dangling_dist;
+            r_new += (1.0 - damping) * personalization;
+            
+            // Check convergence (L1 norm is more common for PageRank)
+            double residual = (r_new - r).lpNorm<1>();
             
             if (residual < tol) {
                 result.scores = r_new;
@@ -261,10 +293,15 @@ private:
             result.scores = r_new;
         }
         
+        // Normalize output
         if (normalize_output) {
-            result.scores /= result.scores.sum();
+            double sum = result.scores.sum();
+            if (sum > 0) {
+                result.scores /= sum;
+            }
         }
         
+        // Compute ranking
         result.ranking = compute_ranking(result.scores);
         
         return result;

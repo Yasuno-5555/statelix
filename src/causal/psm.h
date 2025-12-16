@@ -3,13 +3,16 @@
  * @brief Statelix v2.3 - Propensity Score Matching
  * 
  * Implements:
- *   - Propensity score estimation (logistic regression)
- *   - Nearest neighbor matching (with/without replacement)
+ *   - Propensity score estimation (logistic regression via IRLS)
+ *   - Nearest neighbor matching:
+ *       - 1D PS matching: O(n log n) via sorted binary search
+ *       - Multivariate matching: O(log n) via HNSW (when using covariates)
  *   - Caliper matching
+ *   - Radius matching
  *   - Kernel matching
  *   - Inverse probability weighting (IPW)
  *   - Doubly robust estimation (AIPW)
- *   - Balance diagnostics
+ *   - Balance diagnostics (standardized differences)
  * 
  * Theory:
  * -------
@@ -17,8 +20,12 @@
  * 
  * Under unconfoundedness (Y(0), Y(1) ⊥ D | X):
  *   ATT = E[Y(1) - Y(0) | D=1]
- *       = E[E[Y|D=1,X] - E[Y|D=0,X] | D=1]
- *       = E[E[Y|D=1,e(X)] - E[Y|D=0,e(X)] | D=1]
+ *   ATE = E[Y(1) - Y(0)]
+ *   ATC = E[Y(1) - Y(0) | D=0]
+ * 
+ * Matching on PS:
+ *   For 1D PS, we use sorted binary search for O(log n) per query.
+ *   For multivariate covariate matching, HNSW provides O(log n) ANN.
  * 
  * Reference:
  *   - Rosenbaum, P.R. & Rubin, D.B. (1983). The Central Role of the Propensity Score
@@ -34,6 +41,20 @@
 #include <cmath>
 #include <unordered_set>
 #include <stdexcept>
+#include <limits>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+// Optional HNSW for multivariate matching
+#ifdef STATELIX_USE_HNSW
+#include "../search/hnsw.h"
+#endif
 
 namespace statelix {
 
@@ -42,10 +63,11 @@ namespace statelix {
 // =============================================================================
 
 enum class MatchingMethod {
-    NEAREST_NEIGHBOR,
-    CALIPER,
-    KERNEL,
-    RADIUS
+    NEAREST_NEIGHBOR,   // k-NN on propensity score (1D binary search)
+    CALIPER,            // k-NN with caliper constraint
+    RADIUS,             // All matches within radius
+    KERNEL,             // Kernel-weighted matching
+    COVARIATE           // Multivariate k-NN on covariates (uses HNSW if available)
 };
 
 struct PropensityScoreResult {
@@ -67,14 +89,15 @@ struct MatchingResult {
     double att_ci_lower;
     double att_ci_upper;
     
-    double ate;                     // Average Treatment Effect
+    double ate;                     // Average Treatment Effect (proper estimate)
     double ate_se;
     
-    double atc;                     // Average Treatment effect on Control
+    double atc;                     // Average Treatment effect on Control (proper estimate)
     double atc_se;
     
     // Matching info
     std::vector<std::vector<int>> matches;  // For each treated, matched control indices
+    std::vector<std::vector<int>> matches_atc;  // For ATC: each control's matched treated
     int n_matched_treated;
     int n_matched_control;
     double caliper_used;
@@ -93,6 +116,8 @@ struct IPWResult {
     double att_se;
     double ate;
     double ate_se;
+    double atc;
+    double atc_se;
     Eigen::VectorXd weights;        // IPW weights
     int n_trimmed;                  // Observations trimmed due to extreme weights
 };
@@ -102,7 +127,139 @@ struct AIPWResult {
     double att_se;
     double ate;
     double ate_se;
+    double atc;
+    double atc_se;
     double efficiency_gain;         // % reduction in variance vs IPW
+};
+
+// =============================================================================
+// Sorted Index for 1D Matching (O(log n) per query)
+// =============================================================================
+
+/**
+ * @brief Sorted index for efficient 1D nearest neighbor search
+ * 
+ * For propensity score matching, this is MORE efficient than HNSW
+ * because PS is 1-dimensional. Build: O(n log n), Query: O(k log n).
+ */
+class SortedIndex1D {
+public:
+    void build(const Eigen::VectorXd& values, const std::vector<int>& indices) {
+        sorted_.clear();
+        sorted_.reserve(indices.size());
+        for (int idx : indices) {
+            sorted_.push_back({values(idx), idx});
+        }
+        std::sort(sorted_.begin(), sorted_.end());
+    }
+    
+    /**
+     * @brief Find k nearest neighbors to query value
+     * 
+     * @param query Query value
+     * @param k Number of neighbors
+     * @param max_dist Maximum distance (caliper)
+     * @param exclude Set of indices to exclude (for without-replacement)
+     * @return Vector of (distance, index) pairs, sorted by distance
+     */
+    std::vector<std::pair<double, int>> query(
+        double query,
+        int k,
+        double max_dist = std::numeric_limits<double>::infinity(),
+        const std::unordered_set<int>* exclude = nullptr
+    ) const {
+        if (sorted_.empty()) return {};
+        
+        // Binary search for insertion point
+        auto it = std::lower_bound(sorted_.begin(), sorted_.end(), 
+                                   std::make_pair(query, 0));
+        
+        std::vector<std::pair<double, int>> result;
+        result.reserve(k);
+        
+        // Expand left and right from insertion point
+        auto left = (it == sorted_.begin()) ? sorted_.begin() : std::prev(it);
+        auto right = it;
+        
+        while (result.size() < static_cast<size_t>(k)) {
+            bool has_left = (left >= sorted_.begin() && left < sorted_.end());
+            bool has_right = (right < sorted_.end());
+            
+            if (!has_left && !has_right) break;
+            
+            double dist_left = has_left ? std::abs(left->first - query) : 
+                               std::numeric_limits<double>::infinity();
+            double dist_right = has_right ? std::abs(right->first - query) : 
+                                std::numeric_limits<double>::infinity();
+            
+            // Take closer one
+            if (dist_left <= dist_right) {
+                if (dist_left <= max_dist) {
+                    if (!exclude || exclude->find(left->second) == exclude->end()) {
+                        result.push_back({dist_left, left->second});
+                    }
+                }
+                if (left == sorted_.begin()) {
+                    has_left = false;
+                    left = sorted_.end();  // Mark as exhausted
+                } else {
+                    --left;
+                }
+            } else {
+                if (dist_right <= max_dist) {
+                    if (!exclude || exclude->find(right->second) == exclude->end()) {
+                        result.push_back({dist_right, right->second});
+                    }
+                }
+                ++right;
+            }
+            
+            // Early termination if remaining elements are too far
+            double min_possible = std::min(
+                has_left ? std::abs(left->first - query) : std::numeric_limits<double>::infinity(),
+                has_right ? std::abs(right->first - query) : std::numeric_limits<double>::infinity()
+            );
+            if (min_possible > max_dist && result.size() >= static_cast<size_t>(k)) break;
+        }
+        
+        return result;
+    }
+    
+    /**
+     * @brief Find all neighbors within radius
+     */
+    std::vector<std::pair<double, int>> radius_query(
+        double query,
+        double radius,
+        const std::unordered_set<int>* exclude = nullptr
+    ) const {
+        if (sorted_.empty()) return {};
+        
+        std::vector<std::pair<double, int>> result;
+        
+        // Binary search for lower bound
+        auto lower = std::lower_bound(sorted_.begin(), sorted_.end(),
+                                       std::make_pair(query - radius, INT_MIN));
+        auto upper = std::upper_bound(sorted_.begin(), sorted_.end(),
+                                       std::make_pair(query + radius, INT_MAX));
+        
+        for (auto it = lower; it != upper; ++it) {
+            double dist = std::abs(it->first - query);
+            if (dist <= radius) {
+                if (!exclude || exclude->find(it->second) == exclude->end()) {
+                    result.push_back({dist, it->second});
+                }
+            }
+        }
+        
+        std::sort(result.begin(), result.end());
+        return result;
+    }
+    
+    int size() const { return sorted_.size(); }
+
+private:
+    std::vector<std::pair<double, int>> sorted_;  // (value, original_index)
 };
 
 // =============================================================================
@@ -118,6 +275,7 @@ public:
     int n_neighbors = 1;            // Number of matches per treated
     bool with_replacement = true;
     double caliper = -1;            // -1 for no caliper, else fraction of SD
+    double radius = -1;             // For RADIUS method
     double kernel_bandwidth = 0.06;
     double trim_threshold = 0.01;   // Trim extreme propensity scores
     double conf_level = 0.95;
@@ -152,11 +310,31 @@ public:
             }
             
             Eigen::VectorXd w = p.array() * (1.0 - p.array());
-            Eigen::VectorXd z = eta + (D - p).array() / w.array();
+            Eigen::VectorXd z = (eta.array() + (D - p).array() / w.array()).matrix();
             
-            Eigen::MatrixXd W = w.asDiagonal();
-            Eigen::VectorXd beta_new = (X_aug.transpose() * W * X_aug).ldlt()
-                                       .solve(X_aug.transpose() * W * z);
+            // OPTIMIZATION KERNEL v2: Explicitly scale rows to avoid hidden dense temporaries
+            // 1. Scale X rows by sqrt(w) - O(N*K)
+            // Eigen::MatrixXd X_w = w.cwiseSqrt().asDiagonal() * X_aug;
+            // Actually, scaling is just X_aug.array().colwise() * w.cwiseSqrt().array()
+            // But w.asDiagonal() * X is standard.
+            
+            // Safe approach: Weighted Normal Equations (X'WX)beta = X'Wz
+            // Calculate X'WX without forming W
+            // H = X' * diag(w) * X.
+            // Let X_s = diag(sqrt(w)) * X. Then H = X_s' * X_s.
+            
+            // Note: Creating X_s is (N, K). N=10k, K=20 -> 200k doubles. Fast.
+            Eigen::MatrixXd X_s = w.array().sqrt().matrix().asDiagonal() * X_aug;
+            Eigen::MatrixXd H = Eigen::MatrixXd(k+1, k+1);
+            H.setZero();
+            H.selfadjointView<Eigen::Lower>().rankUpdate(X_s.transpose());
+            
+            // X' W z
+            // z is (N). W is diagonal (N). 
+            Eigen::VectorXd Wz = w.asDiagonal() * z;
+            Eigen::VectorXd rhs = X_aug.transpose() * Wz;
+            
+            Eigen::VectorXd beta_new = H.selfadjointView<Eigen::Lower>().ldlt().solve(rhs);
             
             if ((beta_new - beta).norm() < 1e-8) {
                 beta = beta_new;
@@ -235,17 +413,27 @@ public:
             result.caliper_used = caliper * sd_ps;
         }
         
-        // Matching
+        // Build sorted index for controls (for ATT)
+        SortedIndex1D control_index;
+        control_index.build(ps.scores, control_idx);
+        
+        // Build sorted index for treated (for ATC)
+        SortedIndex1D treated_index;
+        treated_index.build(ps.scores, treated_idx);
+        
+        // === ATT Matching ===
         result.matches.resize(n_t);
         std::unordered_set<int> used_controls;
         
-        if (method == MatchingMethod::NEAREST_NEIGHBOR) {
-            nearest_neighbor_match(ps.scores, treated_idx, control_idx, 
-                                   result.matches, used_controls);
-        } else if (method == MatchingMethod::KERNEL) {
-            // Kernel matching: all controls contribute with weights
-            kernel_match(ps.scores, treated_idx, control_idx, result.matches);
-        }
+        match_units(ps.scores, treated_idx, control_idx, control_index,
+                    result.matches, used_controls, result.caliper_used);
+        
+        // === ATC Matching (controls matched to treated) ===
+        result.matches_atc.resize(n_c);
+        std::unordered_set<int> used_treated;
+        
+        match_units(ps.scores, control_idx, treated_idx, treated_index,
+                    result.matches_atc, used_treated, result.caliper_used);
         
         // Count matched
         result.n_matched_treated = 0;
@@ -254,48 +442,26 @@ public:
         }
         result.n_matched_control = used_controls.size();
         
-        // Estimate ATT
-        double sum_diff = 0;
-        double sum_weight = 0;
-        std::vector<double> diffs;
+        // === Estimate ATT ===
+        double att = 0, att_var = 0;
+        estimate_effect(Y, treated_idx, result.matches, ps.scores, att, att_var);
+        result.att = att;
+        result.att_se = std::sqrt(att_var);
         
-        for (int t = 0; t < n_t; ++t) {
-            if (result.matches[t].empty()) continue;
-            
-            int i = treated_idx[t];
-            double y_t = Y(i);
-            
-            double y_c = 0;
-            double w = 0;
-            for (int j : result.matches[t]) {
-                if (method == MatchingMethod::KERNEL) {
-                    double dist = std::abs(ps.scores(i) - ps.scores(j));
-                    double k = epanechnikov_kernel(dist / kernel_bandwidth);
-                    y_c += k * Y(j);
-                    w += k;
-                } else {
-                    y_c += Y(j);
-                    w += 1.0;
-                }
-            }
-            if (w > 0) y_c /= w;
-            
-            double diff = y_t - y_c;
-            sum_diff += diff;
-            sum_weight += 1.0;
-            diffs.push_back(diff);
-        }
+        // === Estimate ATC ===
+        double atc = 0, atc_var = 0;
+        estimate_effect_atc(Y, control_idx, result.matches_atc, ps.scores, atc, atc_var);
+        result.atc = atc;
+        result.atc_se = std::sqrt(atc_var);
         
-        result.att = (sum_weight > 0) ? sum_diff / sum_weight : 0;
+        // === Estimate ATE ===
+        // ATE = p * ATT + (1-p) * ATC where p = P(D=1)
+        double p_treated = static_cast<double>(n_t) / n;
+        result.ate = p_treated * result.att + (1 - p_treated) * result.atc;
+        result.ate_se = std::sqrt(p_treated * p_treated * att_var + 
+                                  (1 - p_treated) * (1 - p_treated) * atc_var);
         
-        // Standard error (Abadie-Imbens)
-        double var = 0;
-        for (double d : diffs) {
-            var += (d - result.att) * (d - result.att);
-        }
-        var /= (diffs.size() - 1);
-        result.att_se = std::sqrt(var / diffs.size());
-        
+        // Inference for ATT
         result.att_t = result.att / result.att_se;
         result.att_pvalue = 2.0 * (1.0 - normal_cdf(std::abs(result.att_t)));
         
@@ -307,12 +473,6 @@ public:
         compute_balance_after(X, D, result.matches, treated_idx, control_idx, 
                               result.std_diff_after);
         result.mean_std_diff_after = result.std_diff_after.array().abs().mean();
-        
-        // ATE and ATC (rough estimates)
-        result.ate = result.att;  // Simplified
-        result.ate_se = result.att_se;
-        result.atc = result.att;
-        result.atc_se = result.att_se;
         
         return result;
     }
@@ -332,6 +492,12 @@ public:
         result.weights.resize(n);
         result.n_trimmed = 0;
         
+        double sum_d = 0;
+        for (int i = 0; i < n; ++i) {
+            sum_d += D(i);
+        }
+        double p_treated = sum_d / n;
+        
         for (int i = 0; i < n; ++i) {
             double e = ps.scores(i);
             
@@ -340,7 +506,7 @@ public:
                 result.weights(i) = 0;
                 result.n_trimmed++;
             } else if (D(i) > 0.5) {
-                result.weights(i) = 1.0;  // Treated
+                result.weights(i) = 1.0;  // Treated weight for ATT
             } else {
                 result.weights(i) = e / (1.0 - e);  // Control weight for ATT
             }
@@ -363,36 +529,100 @@ public:
         }
         
         double y1_mean = (sum_w1 > 0) ? sum_y1 / sum_w1 : 0;
-        double y0_mean = (sum_w0 > 0) ? sum_y0w / sum_w0 : 0;
+        double y0w_mean = (sum_w0 > 0) ? sum_y0w / sum_w0 : 0;
         
-        result.att = y1_mean - y0_mean;
+        result.att = y1_mean - y0w_mean;
         
-        // Variance via influence function (simplified)
-        double var = 0;
-        int n_eff = 0;
+        // === ATE via IPW ===
+        double sum_ate_1 = 0, sum_ate_0 = 0;
+        int n_valid = 0;
+        
         for (int i = 0; i < n; ++i) {
-            if (result.weights(i) == 0) continue;
-            n_eff++;
+            double e = ps.scores(i);
+            if (e < trim_threshold || e > 1 - trim_threshold) continue;
+            n_valid++;
             
-            double psi;
             if (D(i) > 0.5) {
-                psi = Y(i) - y1_mean - result.att;
+                sum_ate_1 += Y(i) / e;
             } else {
-                psi = -result.weights(i) * (Y(i) - y0_mean);
+                sum_ate_0 += Y(i) / (1.0 - e);
             }
-            var += psi * psi;
         }
-        result.att_se = std::sqrt(var / (n_eff * n_eff));
+        result.ate = (n_valid > 0) ? (sum_ate_1 - sum_ate_0) / n_valid : 0;
         
-        // ATE
-        result.ate = result.att;  // Simplified
-        result.ate_se = result.att_se;
+        // === ATC via IPW ===
+        double sum_atc_1w = 0, sum_atc_1_w = 0;
+        double sum_atc_0 = 0, sum_atc_0_n = 0;
+        
+        for (int i = 0; i < n; ++i) {
+            double e = ps.scores(i);
+            if (e < trim_threshold || e > 1 - trim_threshold) continue;
+            
+            if (D(i) > 0.5) {
+                double w = (1.0 - e) / e;
+                sum_atc_1w += Y(i) * w;
+                sum_atc_1_w += w;
+            } else {
+                sum_atc_0 += Y(i);
+                sum_atc_0_n += 1.0;
+            }
+        }
+        double y1w_mean_atc = (sum_atc_1_w > 0) ? sum_atc_1w / sum_atc_1_w : 0;
+        double y0_mean_atc = (sum_atc_0_n > 0) ? sum_atc_0 / sum_atc_0_n : 0;
+        result.atc = y1w_mean_atc - y0_mean_atc;
+        
+        // Variance via influence function
+        std::vector<double> psi_att, psi_ate, psi_atc;
+        for (int i = 0; i < n; ++i) {
+            double e = ps.scores(i);
+            if (e < trim_threshold || e > 1 - trim_threshold) continue;
+            
+            // ATT influence
+            if (D(i) > 0.5) {
+                psi_att.push_back((Y(i) - y1_mean) - result.att);
+            } else {
+                double w = e / (1.0 - e);
+                psi_att.push_back(-w * (Y(i) - y0w_mean));
+            }
+            
+            // ATE influence
+            if (D(i) > 0.5) {
+                psi_ate.push_back(Y(i) / e - result.ate);
+            } else {
+                psi_ate.push_back(-Y(i) / (1.0 - e));
+            }
+            
+            // ATC influence
+            if (D(i) > 0.5) {
+                double w = (1.0 - e) / e;
+                psi_atc.push_back(w * (Y(i) - y1w_mean_atc));
+            } else {
+                psi_atc.push_back((y0_mean_atc - Y(i)) - result.atc);
+            }
+        }
+        
+        // Compute variances
+        auto compute_var = [](const std::vector<double>& psi) {
+            double sum = 0, sum2 = 0;
+            for (double p : psi) {
+                sum += p;
+                sum2 += p * p;
+            }
+            int n = psi.size();
+            return (n > 1) ? sum2 / (n * n) : 0.0;
+        };
+        
+        result.att_se = std::sqrt(compute_var(psi_att));
+        result.ate_se = std::sqrt(compute_var(psi_ate));
+        result.atc_se = std::sqrt(compute_var(psi_atc));
         
         return result;
     }
     
     /**
      * @brief Augmented IPW (Doubly Robust) estimator
+     * 
+     * AIPW ATT = E[D(Y - μ₀(X)) / P(D=1)] + E[(1-D)e(X)/(1-e(X)) * (Y - μ₀(X)) / P(D=1)]
      */
     AIPWResult aipw(
         const Eigen::VectorXd& Y,
@@ -404,15 +634,14 @@ public:
         int k = X.cols();
         AIPWResult result;
         
-        // Estimate outcome model for each treatment status
-        // μ(1,X) and μ(0,X) via OLS
+        // Estimate outcome models μ₁(X) = E[Y|D=1,X] and μ₀(X) = E[Y|D=0,X]
         std::vector<int> t_idx, c_idx;
         for (int i = 0; i < n; ++i) {
             if (D(i) > 0.5) t_idx.push_back(i);
             else c_idx.push_back(i);
         }
         
-        // OLS for treated
+        // OLS for treated: Y = Xβ₁
         Eigen::MatrixXd X1(t_idx.size(), k + 1);
         Eigen::VectorXd Y1(t_idx.size());
         for (size_t j = 0; j < t_idx.size(); ++j) {
@@ -422,7 +651,7 @@ public:
         }
         Eigen::VectorXd beta1 = (X1.transpose() * X1).ldlt().solve(X1.transpose() * Y1);
         
-        // OLS for control
+        // OLS for control: Y = Xβ₀
         Eigen::MatrixXd X0(c_idx.size(), k + 1);
         Eigen::VectorXd Y0(c_idx.size());
         for (size_t j = 0; j < c_idx.size(); ++j) {
@@ -432,7 +661,7 @@ public:
         }
         Eigen::VectorXd beta0 = (X0.transpose() * X0).ldlt().solve(X0.transpose() * Y0);
         
-        // Predict μ(1,X) and μ(0,X) for all observations
+        // Predict μ₁(X) and μ₀(X) for all observations
         Eigen::VectorXd mu1(n), mu0(n);
         for (int i = 0; i < n; ++i) {
             Eigen::VectorXd x(k + 1);
@@ -442,10 +671,11 @@ public:
             mu0(i) = x.dot(beta0);
         }
         
-        // AIPW estimator
-        double sum_psi = 0;
-        double sum_w = 0;
-        std::vector<double> psi_vals;
+        // AIPW estimator for ATT
+        // ATT = (1/n₁) Σ_i [D_i(Y_i - μ₀(X_i)) - (1-D_i)e(X_i)/(1-e(X_i))(Y_i - μ₀(X_i))]
+        double sum_att = 0;
+        int n_t = 0;
+        std::vector<double> psi_att;
         
         for (int i = 0; i < n; ++i) {
             double e = ps.scores(i);
@@ -453,91 +683,247 @@ public:
             
             double psi;
             if (D(i) > 0.5) {
-                // Treated: Y - μ(1,X) + E[μ(1,X)|D=1]
-                psi = Y(i) - mu0(i) - (1 - D(i)) / (1 - e) * (Y(i) - mu0(i));
+                psi = Y(i) - mu0(i);
+                n_t++;
             } else {
-                // Control
-                psi = mu1(i) - Y(i) + D(i) / e * (Y(i) - mu1(i));
+                psi = -e / (1.0 - e) * (Y(i) - mu0(i));
             }
-            
-            // ATT influence
-            double psi_att = D(i) * (Y(i) - mu0(i)) - 
-                             (1 - D(i)) * e / (1 - e) * (Y(i) - mu0(i));
-            
-            sum_psi += psi_att;
-            sum_w += D(i);
-            psi_vals.push_back(psi_att);
+            sum_att += psi;
+            psi_att.push_back(psi);
         }
+        result.att = (n_t > 0) ? sum_att / n_t : 0;
         
-        result.att = sum_psi / sum_w;
+        // AIPW estimator for ATE
+        // ATE = (1/n) Σ_i [μ₁(X_i) - μ₀(X_i) + D_i(Y_i-μ₁)/e - (1-D_i)(Y_i-μ₀)/(1-e)]
+        double sum_ate = 0;
+        int n_valid = 0;
+        std::vector<double> psi_ate;
         
-        // Variance
-        double var = 0;
-        for (double p : psi_vals) {
-            var += (p - result.att) * (p - result.att);
+        for (int i = 0; i < n; ++i) {
+            double e = ps.scores(i);
+            if (e < trim_threshold || e > 1 - trim_threshold) continue;
+            
+            double psi = mu1(i) - mu0(i);
+            if (D(i) > 0.5) {
+                psi += (Y(i) - mu1(i)) / e;
+            } else {
+                psi -= (Y(i) - mu0(i)) / (1.0 - e);
+            }
+            sum_ate += psi;
+            n_valid++;
+            psi_ate.push_back(psi);
         }
-        result.att_se = std::sqrt(var / (psi_vals.size() * psi_vals.size()));
+        result.ate = (n_valid > 0) ? sum_ate / n_valid : 0;
         
-        // ATE
-        result.ate = result.att;  // Simplified
-        result.ate_se = result.att_se;
+        // AIPW estimator for ATC
+        double sum_atc = 0;
+        int n_c = 0;
+        std::vector<double> psi_atc;
         
-        // Efficiency gain vs IPW (rough)
+        for (int i = 0; i < n; ++i) {
+            double e = ps.scores(i);
+            if (e < trim_threshold || e > 1 - trim_threshold) continue;
+            
+            double psi;
+            if (D(i) > 0.5) {
+                psi = (1.0 - e) / e * (Y(i) - mu1(i));
+            } else {
+                psi = mu1(i) - Y(i);
+                n_c++;
+            }
+            sum_atc += psi;
+            psi_atc.push_back(psi);
+        }
+        result.atc = (n_c > 0) ? sum_atc / n_c : 0;
+        
+        // Variances
+        auto compute_var = [](const std::vector<double>& psi, double mean, int denom) {
+            double sum2 = 0;
+            for (double p : psi) {
+                double centered = p - mean * (psi.size() > 0);
+                sum2 += centered * centered;
+            }
+            return sum2 / (denom * denom);
+        };
+        
+        result.att_se = std::sqrt(compute_var(psi_att, result.att, n_t));
+        result.ate_se = std::sqrt(compute_var(psi_ate, result.ate, n_valid));
+        result.atc_se = std::sqrt(compute_var(psi_atc, result.atc, n_c));
+        
+        // Efficiency gain vs IPW
         IPWResult ipw_result = ipw(Y, D, ps);
-        result.efficiency_gain = (ipw_result.att_se - result.att_se) / ipw_result.att_se * 100;
+        result.efficiency_gain = (ipw_result.att_se > 0) ?
+            (ipw_result.att_se - result.att_se) / ipw_result.att_se * 100 : 0;
         
         return result;
     }
     
 private:
-    void nearest_neighbor_match(
+    /**
+     * @brief Match units using sorted index
+     */
+    void match_units(
         const Eigen::VectorXd& scores,
-        const std::vector<int>& treated_idx,
-        const std::vector<int>& control_idx,
+        const std::vector<int>& query_idx,      // Units to match (treated for ATT)
+        const std::vector<int>& target_idx,     // Pool to match from (control for ATT)
+        const SortedIndex1D& target_index,
         std::vector<std::vector<int>>& matches,
-        std::unordered_set<int>& used_controls
+        std::unordered_set<int>& used_targets,
+        double caliper_dist
     ) {
-        int n_t = treated_idx.size();
-        
-        for (int t = 0; t < n_t; ++t) {
-            int i = treated_idx[t];
-            double ps_t = scores(i);
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(dynamic)
+#endif
+        for (size_t t = 0; t < query_idx.size(); ++t) {
+            int i = query_idx[t];
+            double ps_i = scores(i);
             
-            // Find k nearest controls
-            std::vector<std::pair<double, int>> distances;
-            for (int j : control_idx) {
-                if (!with_replacement && used_controls.count(j)) continue;
-                
-                double dist = std::abs(ps_t - scores(j));
-                if (dist <= caliper || caliper < 0) {
-                    distances.push_back({dist, j});
-                }
+            std::vector<std::pair<double, int>> neighbors;
+            
+            if (method == MatchingMethod::RADIUS) {
+                double r = (radius > 0) ? radius : caliper_dist;
+                neighbors = target_index.radius_query(
+                    ps_i, r, 
+                    with_replacement ? nullptr : &used_targets);
+            } else if (method == MatchingMethod::KERNEL) {
+                // Kernel: get all targets within bandwidth
+                neighbors = target_index.radius_query(
+                    ps_i, kernel_bandwidth * 3,  // 3 sigma
+                    nullptr);  // Kernel always uses all
+            } else {
+                // NEAREST_NEIGHBOR or CALIPER
+                neighbors = target_index.query(
+                    ps_i, n_neighbors, caliper_dist,
+                    with_replacement ? nullptr : &used_targets);
             }
             
-            std::sort(distances.begin(), distances.end());
-            
-            for (int k = 0; k < std::min(n_neighbors, (int)distances.size()); ++k) {
-                int j = distances[k].second;
+            for (const auto& [dist, j] : neighbors) {
                 matches[t].push_back(j);
-                used_controls.insert(j);
+                if (!with_replacement) {
+                    used_targets.insert(j);
+                }
             }
         }
     }
     
-    void kernel_match(
-        const Eigen::VectorXd& scores,
+    /**
+     * @brief Estimate ATT from matches
+     */
+    void estimate_effect(
+        const Eigen::VectorXd& Y,
         const std::vector<int>& treated_idx,
-        const std::vector<int>& control_idx,
-        std::vector<std::vector<int>>& matches
+        const std::vector<std::vector<int>>& matches,
+        const Eigen::VectorXd& scores,
+        double& effect,
+        double& variance
     ) {
-        int n_t = treated_idx.size();
+        std::vector<double> diffs;
         
-        for (int t = 0; t < n_t; ++t) {
-            // Include all controls for kernel matching
-            for (int j : control_idx) {
-                matches[t].push_back(j);
+        for (size_t t = 0; t < treated_idx.size(); ++t) {
+            if (matches[t].empty()) continue;
+            
+            int i = treated_idx[t];
+            double y_t = Y(i);
+            
+            double y_c = 0, w_sum = 0;
+            
+            if (method == MatchingMethod::KERNEL) {
+                for (int j : matches[t]) {
+                    double dist = std::abs(scores(i) - scores(j));
+                    double k = epanechnikov_kernel(dist / kernel_bandwidth);
+                    y_c += k * Y(j);
+                    w_sum += k;
+                }
+            } else {
+                for (int j : matches[t]) {
+                    y_c += Y(j);
+                    w_sum += 1.0;
+                }
+            }
+            
+            if (w_sum > 0) {
+                y_c /= w_sum;
+                diffs.push_back(y_t - y_c);
             }
         }
+        
+        if (diffs.empty()) {
+            effect = 0;
+            variance = 0;
+            return;
+        }
+        
+        // Mean
+        effect = 0;
+        for (double d : diffs) effect += d;
+        effect /= diffs.size();
+        
+        // Variance (Abadie-Imbens style)
+        double var = 0;
+        for (double d : diffs) {
+            var += (d - effect) * (d - effect);
+        }
+        var /= (diffs.size() - 1);
+        variance = var / diffs.size();
+    }
+    
+    /**
+     * @brief Estimate ATC from matches (control matched to treated)
+     */
+    void estimate_effect_atc(
+        const Eigen::VectorXd& Y,
+        const std::vector<int>& control_idx,
+        const std::vector<std::vector<int>>& matches_atc,
+        const Eigen::VectorXd& scores,
+        double& effect,
+        double& variance
+    ) {
+        std::vector<double> diffs;
+        
+        for (size_t c = 0; c < control_idx.size(); ++c) {
+            if (matches_atc[c].empty()) continue;
+            
+            int i = control_idx[c];
+            double y_c = Y(i);
+            
+            double y_t = 0, w_sum = 0;
+            
+            if (method == MatchingMethod::KERNEL) {
+                for (int j : matches_atc[c]) {
+                    double dist = std::abs(scores(i) - scores(j));
+                    double k = epanechnikov_kernel(dist / kernel_bandwidth);
+                    y_t += k * Y(j);
+                    w_sum += k;
+                }
+            } else {
+                for (int j : matches_atc[c]) {
+                    y_t += Y(j);
+                    w_sum += 1.0;
+                }
+            }
+            
+            if (w_sum > 0) {
+                y_t /= w_sum;
+                diffs.push_back(y_t - y_c);  // Treatment effect for this control
+            }
+        }
+        
+        if (diffs.empty()) {
+            effect = 0;
+            variance = 0;
+            return;
+        }
+        
+        effect = 0;
+        for (double d : diffs) effect += d;
+        effect /= diffs.size();
+        
+        double var = 0;
+        for (double d : diffs) {
+            var += (d - effect) * (d - effect);
+        }
+        var /= (diffs.size() - 1);
+        variance = var / diffs.size();
     }
     
     void compute_balance(
@@ -633,6 +1019,7 @@ private:
     }
     
     double normal_quantile(double p) {
+        // Approximation using inverse error function
         double a = 0.147;
         double x = 2 * p - 1;
         double ln = std::log(1 - x * x);
@@ -641,6 +1028,98 @@ private:
                             - (2/(M_PI*a) + ln/2)) * std::sqrt(2);
     }
 };
+
+// =============================================================================
+// Multivariate Matching with HNSW (for covariate matching)
+// =============================================================================
+
+#ifdef STATELIX_USE_HNSW
+
+/**
+ * @brief Covariate Matching using HNSW
+ * 
+ * For high-dimensional covariate matching (Mahalanobis distance, etc.),
+ * HNSW provides O(log n) approximate nearest neighbor search.
+ * 
+ * This is useful when:
+ *   - Matching directly on covariates (not PS)
+ *   - Matching on PS + covariates combined
+ *   - Very high-dimensional feature spaces
+ */
+class CovariateMatching {
+public:
+    int n_neighbors = 1;
+    bool with_replacement = true;
+    search::HNSWConfig hnsw_config;
+    
+    /**
+     * @brief Match treated to controls using covariate distance
+     * 
+     * @param X Covariates (n × d)
+     * @param D Treatment indicator
+     * @param mahalanobis If true, use Mahalanobis distance
+     */
+    std::vector<std::vector<int>> match(
+        const Eigen::MatrixXd& X,
+        const Eigen::VectorXd& D,
+        bool mahalanobis = false
+    ) {
+        int n = X.rows();
+        
+        // Transform to Mahalanobis if requested
+        Eigen::MatrixXd X_use = X;
+        if (mahalanobis) {
+            Eigen::MatrixXd cov = (X.transpose() * X) / n;
+            Eigen::LLT<Eigen::MatrixXd> llt(cov);
+            X_use = llt.solve(X.transpose()).transpose();
+        }
+        
+        // Separate indices
+        std::vector<int> treated_idx, control_idx;
+        for (int i = 0; i < n; ++i) {
+            if (D(i) > 0.5) treated_idx.push_back(i);
+            else control_idx.push_back(i);
+        }
+        
+        // Build HNSW index on controls
+        Eigen::MatrixXd X_control(control_idx.size(), X_use.cols());
+        for (size_t i = 0; i < control_idx.size(); ++i) {
+            X_control.row(i) = X_use.row(control_idx[i]);
+        }
+        
+        search::HNSW index(hnsw_config);
+        index.build(X_control);
+        
+        // Query for each treated
+        std::vector<std::vector<int>> matches(treated_idx.size());
+        std::unordered_set<int> used;
+        
+        for (size_t t = 0; t < treated_idx.size(); ++t) {
+            Eigen::VectorXd query = X_use.row(treated_idx[t]).transpose();
+            
+            // Query HNSW
+            int k_query = with_replacement ? n_neighbors : 
+                          std::min(n_neighbors * 2, (int)control_idx.size());
+            auto result = index.query(query, k_query);
+            
+            int matched = 0;
+            for (size_t j = 0; j < result.indices.size() && matched < n_neighbors; ++j) {
+                int ctrl_local = result.indices[j];
+                int ctrl_global = control_idx[ctrl_local];
+                
+                if (!with_replacement && used.count(ctrl_global)) continue;
+                
+                matches[t].push_back(ctrl_global);
+                used.insert(ctrl_global);
+                matched++;
+            }
+        }
+        
+        return matches;
+    }
+};
+
+#endif // STATELIX_USE_HNSW
 
 } // namespace statelix
 

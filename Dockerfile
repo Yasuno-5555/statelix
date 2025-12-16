@@ -1,24 +1,29 @@
-# Statelix 開発用 Dockerfile
-FROM ubuntu:22.04
+FROM python:3.10-slim-bullseye
 
-# 必要パッケージ
+# 1. System Dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential cmake git python3 python3-pip python3-venv \
-    libeigen3-dev libqt6* pkg-config curl wget \
+    build-essential \
+    cmake \
+    git \
+    libomp-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Python環境
+# 2. Python Dependencies
+RUN pip install --no-cache-dir numpy pandas pybind11 scipy scikit-learn
+
 WORKDIR /statelix
-RUN python3 -m venv venv
-ENV PATH="/statelix/venv/bin:$PATH"
 
-# Python依存ライブラリ
-RUN pip install --upgrade pip
-RUN pip install pybind11 pandas pyarrow numpy matplotlib pyqt6
+# 3. Copy Source Code (Replaces git clone for local dev)
+# This captures all local changes without needing a remote repo
+COPY . /statelix
 
-# Wasmランタイム
-RUN pip install wasmtime
+# 4. Build C++ Core
+RUN rm -rf build && mkdir build && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build . --config Release --parallel 4
 
-# デフォルト作業ディレクトリ
-WORKDIR /statelix
-CMD ["/bin/bash"]
+# 5. Install Extension (Manual placement for dev)
+RUN find build -name "*.so" -exec cp {} statelix_py/core/ \;
+
+# 6. Run Benchmarks (Run at container start)
+CMD ["python3", "run_benchmarks.py"]

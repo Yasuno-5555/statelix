@@ -23,6 +23,7 @@
 
 #include <Eigen/Dense>
 #include <memory>
+#include <random>
 #include <cmath>
 #include <stdexcept>
 #include "../optimization/objective.h"

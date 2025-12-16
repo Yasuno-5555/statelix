@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 
+from statelix_py.gui.panels.exploratory_panel import ExploratoryPanel
 from statelix_py.gui.panels.data_panel import DataPanel
 from statelix_py.gui.panels.model_panel import ModelPanel
 from statelix_py.gui.panels.result_panel import ResultPanel
@@ -216,13 +217,16 @@ class MainWindow(QMainWindow):
         self.output_tabs = QTabWidget()
         self.result_panel = ResultPanel()
         self.plot_panel = PlotPanel()
+        self.exploratory_panel = ExploratoryPanel()
         
         self.output_tabs.addTab(self.result_panel, "テキスト結果")
         self.output_tabs.addTab(self.plot_panel, "プロット (Viz)")
+        self.output_tabs.addTab(self.exploratory_panel, "探索的分析 (EDA)")
         
         # Connect
         self.model_panel.run_requested.connect(self.run_analysis)
         self.data_panel.data_loaded.connect(self.model_panel.update_columns)
+        self.data_panel.data_loaded.connect(self.exploratory_panel.on_data_loaded)
         
         splitter.addWidget(self.data_panel)
         splitter.addWidget(self.model_panel)

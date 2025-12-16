@@ -241,16 +241,19 @@ public:
         
         // Run SC for each donor as placebo treated
         for (int j = 0; j < N; ++j) {
+            if (j == treated_idx) continue; // Skip actual treated unit
+            
             try {
                 auto placebo_result = fit(Y, j, treatment_period);
                 
-                // Only include if good pre-treatment fit
-                if (placebo_result.pre_rmspe < 2 * treated_result.pre_rmspe) {
+                // Only include if good pre-treatment fit (e.g. < 5x treated pre-rmspe)
+                // Relaxed threshold to gather more distribution points
+                if (placebo_result.pre_rmspe < 5.0 * std::max(1e-8, treated_result.pre_rmspe)) {
                     result.placebo_gaps.push_back(placebo_result.gaps);
                     result.rmspe_ratios.push_back(placebo_result.rmspe_ratio);
                 }
-            } catch (...) {
-                // Skip if SC fails for this unit
+            } catch (const std::exception&) {
+                // Skip if SC fails for this unit (e.g. optimization divergence)
                 continue;
             }
         }
@@ -316,22 +319,28 @@ private:
         Eigen::VectorXd X0tX1 = X0.transpose() * X1;
         
         // Add small ridge penalty for stability
-        X0tX0.diagonal().array() += v_penalty;
+        double epsilon = 1e-8;
+        X0tX0.diagonal().array() += (v_penalty + epsilon);
         
-        // Projected gradient descent
-        double step = 1.0 / (X0tX0.norm() + 1);
+        // Projected gradient descent step size
+        // Use Frobenius norm as safe upper bound for Spectral norm
+        double L = X0tX0.norm(); 
+        double step = 1.0 / (L + 1e-8);
         
         for (int iter = 0; iter < max_iter; ++iter) {
             // Gradient: 2 * (X0'X0 * w - X0'X1)
             Eigen::VectorXd grad = 2.0 * (X0tX0 * w - X0tX1);
             
+            // Check convergence on gradient
+            if (grad.norm() < tol) break;
+            
             // Gradient step
             Eigen::VectorXd w_new = w - step * grad;
             
-            // Project onto simplex (non-negative, sum to 1)
+            // Project onto simplex
             w_new = project_simplex(w_new);
             
-            // Check convergence
+            // Check convergence on parameters
             if ((w_new - w).norm() < tol) {
                 w = w_new;
                 break;

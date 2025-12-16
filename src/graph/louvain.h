@@ -14,9 +14,15 @@
  * Repeat until no improvement
  * 
  * Modularity:
- *   Q = (1/2m) Σ_ij [A_ij - k_i k_j / 2m] δ(c_i, c_j)
+ *   Q = (1/2m) Σ_ij [A_ij - γ k_i k_j / 2m] δ(c_i, c_j)
  * 
  * where A = adjacency, k_i = degree(i), m = total edges
+ * 
+ * Note on undirected graphs:
+ * --------------------------
+ * This implementation assumes undirected graphs. Input matrices are
+ * symmetrized. Self-loops are NOT expected (A_ii = 0). Each edge (i,j)
+ * appears twice in the adjacency matrix (A_ij and A_ji).
  * 
  * Reference: Blondel, V. et al. (2008). Fast unfolding of communities in
  *            large networks. Journal of Statistical Mechanics.
@@ -92,7 +98,8 @@ public:
         LouvainResult result;
         rng_.seed(seed);
         
-        // Make symmetric (undirected)
+        // Make symmetric (undirected) - note: this doubles edge weights if already symmetric
+        // We use (A + A^T) / 2 to handle both symmetric and asymmetric inputs
         Eigen::SparseMatrix<double> A = (adjacency + Eigen::SparseMatrix<double>(adjacency.transpose())) / 2.0;
         
         // Initialize: each node is its own community
@@ -100,7 +107,8 @@ public:
         std::iota(labels.begin(), labels.end(), 0);
         
         // Precompute graph properties
-        double m = A.sum() / 2.0;  // Total edge weight
+        // m = total edge weight = sum(A) / 2 (since A is symmetric)
+        double m = A.sum() / 2.0;
         if (m < 1e-10) {
             // Empty graph
             result.labels = labels;
@@ -109,7 +117,8 @@ public:
             return result;
         }
         
-        Eigen::VectorXd k = Eigen::VectorXd::Zero(n);  // Degree (weighted)
+        // Weighted degree: k(i) = sum_j A_ij
+        Eigen::VectorXd k = Eigen::VectorXd::Zero(n);
         for (int i = 0; i < A.outerSize(); ++i) {
             for (Eigen::SparseMatrix<double>::InnerIterator it(A, i); it; ++it) {
                 k(it.row()) += it.value();
@@ -195,8 +204,17 @@ private:
     std::mt19937 rng_;
     
     /**
-     * @brief Compute modularity
+     * @brief Compute modularity (corrected version)
+     * 
      * Q = (1/2m) Σ_ij [A_ij - γ k_i k_j / 2m] δ(c_i, c_j)
+     * 
+     * Since A is symmetric, we only iterate over upper triangle (i < j)
+     * and multiply by 2. Self-loops (i == i) are handled separately.
+     * 
+     * Note: For efficiency, we rewrite as:
+     *   Q = Σ_c [Σ_in(c) / 2m - γ * (Σ_tot(c) / 2m)^2]
+     * where Σ_in(c) = sum of edge weights within community c
+     *       Σ_tot(c) = sum of degrees of nodes in community c
      */
     double compute_modularity(
         const Eigen::SparseMatrix<double>& A,
@@ -204,22 +222,43 @@ private:
         const Eigen::VectorXd& k,
         double m
     ) {
-        double Q = 0.0;
+        int n_comm = *std::max_element(labels.begin(), labels.end()) + 1;
         
-        for (int i = 0; i < A.outerSize(); ++i) {
-            for (Eigen::SparseMatrix<double>::InnerIterator it(A, i); it; ++it) {
-                int j = it.row();
+        // sum_in[c] = sum of edge weights inside community c (each edge counted once)
+        // sum_tot[c] = sum of degrees of nodes in community c
+        std::vector<double> sum_in(n_comm, 0.0);
+        std::vector<double> sum_tot(n_comm, 0.0);
+        
+        for (int i = 0; i < (int)labels.size(); ++i) {
+            sum_tot[labels[i]] += k(i);
+        }
+        
+        // Count internal edges - iterate over upper triangle only
+        for (int j = 0; j < A.outerSize(); ++j) {
+            for (Eigen::SparseMatrix<double>::InnerIterator it(A, j); it; ++it) {
+                int i = it.row();
+                if (i >= j) continue;  // Only upper triangle (i < j)
                 if (labels[i] == labels[j]) {
-                    Q += it.value() - resolution * k(i) * k(j) / (2.0 * m);
+                    sum_in[labels[i]] += it.value();  // Each edge once
                 }
             }
         }
         
-        return Q / (2.0 * m);
+        // Q = Σ_c [Σ_in(c) / m - γ * (Σ_tot(c) / 2m)^2]
+        // Note: Σ_in / m because m = sum(A)/2 and we counted each edge once
+        double Q = 0.0;
+        for (int c = 0; c < n_comm; ++c) {
+            Q += sum_in[c] / m - resolution * std::pow(sum_tot[c] / (2.0 * m), 2);
+        }
+        
+        return Q;
     }
     
     /**
      * @brief Phase 1: Local node movement optimization
+     * 
+     * For each node, compute the modularity gain of moving to each
+     * neighbor community, and move to the one with maximum gain.
      */
     bool local_optimization(
         const Eigen::SparseMatrix<double>& A,
@@ -239,23 +278,31 @@ private:
         
         // Precompute community properties
         int n_comm = *std::max_element(labels.begin(), labels.end()) + 1;
-        std::vector<double> sum_in(n_comm, 0.0);    // Sum of weights inside community
-        std::vector<double> sum_tot(n_comm, 0.0);   // Sum of total weights to community
+        
+        // sum_in[c] = sum of internal edge weights (each edge counted once)
+        // sum_tot[c] = sum of degrees in community c
+        std::vector<double> sum_in(n_comm, 0.0);
+        std::vector<double> sum_tot(n_comm, 0.0);
         
         for (int i = 0; i < n; ++i) {
             sum_tot[labels[i]] += k(i);
         }
         
-        for (int i = 0; i < A.outerSize(); ++i) {
-            for (Eigen::SparseMatrix<double>::InnerIterator it(A, i); it; ++it) {
-                if (labels[i] == labels[it.row()]) {
+        // Count internal edges (upper triangle only)
+        for (int j = 0; j < A.outerSize(); ++j) {
+            for (Eigen::SparseMatrix<double>::InnerIterator it(A, j); it; ++it) {
+                int i = it.row();
+                if (i >= j) continue;
+                if (labels[i] == labels[j]) {
                     sum_in[labels[i]] += it.value();
                 }
             }
         }
-        for (int c = 0; c < n_comm; ++c) {
-            sum_in[c] /= 2.0;  // Each edge counted twice
-        }
+        
+        // Pre-allocate vector for k_i_in (faster than unordered_map for small communities)
+        std::vector<double> k_i_in(n_comm, 0.0);
+        std::vector<int> neighbor_comms;
+        neighbor_comms.reserve(n_comm);
         
         // Iterate until convergence
         for (int iter = 0; iter < max_iterations; ++iter) {
@@ -265,47 +312,73 @@ private:
                 int i = idx;
                 int c_i = labels[i];
                 
-                // Compute edges to each neighbor community
-                std::unordered_map<int, double> k_i_in;  // edges from i to each community
+                // Reset k_i_in for this node
+                for (int c : neighbor_comms) {
+                    k_i_in[c] = 0.0;
+                }
+                neighbor_comms.clear();
+                
+                // Compute edges from node i to each neighbor community
                 for (Eigen::SparseMatrix<double>::InnerIterator it(A, i); it; ++it) {
                     int j = it.row();
-                    k_i_in[labels[j]] += it.value();
+                    int c_j = labels[j];
+                    if (k_i_in[c_j] == 0.0 && c_j != c_i) {
+                        neighbor_comms.push_back(c_j);
+                    }
+                    k_i_in[c_j] += it.value();
                 }
                 
-                // Remove i from its community
-                sum_tot[c_i] -= k(i);
-                sum_in[c_i] -= k_i_in[c_i];
-                labels[i] = -1;  // Temporarily unassigned
+                // Also include current community if not already
+                if (k_i_in[c_i] == 0.0) {
+                    // k_i_in[c_i] is already 0, node has no intra-community edges
+                }
+                neighbor_comms.push_back(c_i);  // Always consider staying
                 
-                // Find best community
-                double best_delta = 0.0;
+                double k_i = k(i);
+                
+                // Remove node i from its current community for gain calculation
+                // ΔQ for removing i from c_i = -k_i_in[c_i]/m + γ * k_i * (sum_tot[c_i] - k_i) / (2m^2)
+                double remove_cost = k_i_in[c_i] / m - 
+                                     resolution * k_i * (sum_tot[c_i] - k_i) / (2.0 * m * m);
+                
+                // Find best community to move to
+                double best_gain = 0.0;
                 int best_c = c_i;
                 
-                for (const auto& [c, k_ic] : k_i_in) {
-                    // Modularity gain: ΔQ = k_ic/m - γ * k_i * Σ_tot_c / 2m²
-                    double delta = k_ic / m - resolution * k(i) * sum_tot[c] / (2.0 * m * m);
+                for (int c : neighbor_comms) {
+                    if (c == c_i) {
+                        // Staying in current community: gain = 0
+                        if (0.0 > best_gain) {
+                            best_gain = 0.0;
+                            best_c = c_i;
+                        }
+                    } else {
+                        // Moving to community c:
+                        // ΔQ = k_i_in[c]/m - γ * k_i * sum_tot[c] / (2m^2) - remove_cost
+                        double add_gain = k_i_in[c] / m - 
+                                          resolution * k_i * sum_tot[c] / (2.0 * m * m);
+                        double total_gain = add_gain - remove_cost;
+                        
+                        if (total_gain > best_gain) {
+                            best_gain = total_gain;
+                            best_c = c;
+                        }
+                    }
+                }
+                
+                // Move node if beneficial
+                if (best_c != c_i && best_gain > min_modularity_gain) {
+                    // Update sum_tot
+                    sum_tot[c_i] -= k_i;
+                    sum_tot[best_c] += k_i;
                     
-                    if (delta > best_delta) {
-                        best_delta = delta;
-                        best_c = c;
-                    }
-                }
-                
-                // Also consider original community
-                if (k_i_in.find(c_i) != k_i_in.end()) {
-                    double delta = k_i_in[c_i] / m - resolution * k(i) * sum_tot[c_i] / (2.0 * m * m);
-                    if (delta > best_delta) {
-                        best_delta = delta;
-                        best_c = c_i;
-                    }
-                }
-                
-                // Assign to best community  
-                labels[i] = best_c;
-                sum_tot[best_c] += k(i);
-                sum_in[best_c] += k_i_in[best_c];
-                
-                if (best_c != c_i && best_delta > min_modularity_gain) {
+                    // Update sum_in (approximate - will be recomputed next iteration)
+                    // Edges from i to nodes in c_i become external (remove from sum_in[c_i])
+                    // Edges from i to nodes in best_c become internal (add to sum_in[best_c])
+                    sum_in[c_i] -= k_i_in[c_i];
+                    sum_in[best_c] += k_i_in[best_c];
+                    
+                    labels[i] = best_c;
                     improved = true;
                     any_improvement = true;
                 }
@@ -334,6 +407,9 @@ private:
     
     /**
      * @brief Phase 2: Aggregate communities into super-nodes
+     * 
+     * Each community becomes a node. Edges between communities become
+     * weighted edges between super-nodes. Internal edges become self-loops.
      */
     std::pair<Eigen::SparseMatrix<double>, Eigen::VectorXd> aggregate(
         const Eigen::SparseMatrix<double>& A,
@@ -346,10 +422,10 @@ private:
         std::vector<Eigen::Triplet<double>> triplets;
         std::unordered_map<long long, double> edge_weights;
         
-        for (int i = 0; i < A.outerSize(); ++i) {
-            for (Eigen::SparseMatrix<double>::InnerIterator it(A, i); it; ++it) {
-                int c1 = labels[i];
-                int c2 = labels[it.row()];
+        for (int j = 0; j < A.outerSize(); ++j) {
+            for (Eigen::SparseMatrix<double>::InnerIterator it(A, j); it; ++it) {
+                int c1 = labels[j];  // Column community
+                int c2 = labels[it.row()];  // Row community
                 long long key = static_cast<long long>(c1) * n_comm + c2;
                 edge_weights[key] += it.value();
             }
@@ -358,7 +434,7 @@ private:
         for (const auto& [key, w] : edge_weights) {
             int c1 = key / n_comm;
             int c2 = key % n_comm;
-            triplets.emplace_back(c1, c2, w);
+            triplets.emplace_back(c2, c1, w);  // Note: (row, col)
         }
         
         Eigen::SparseMatrix<double> A_new(n_comm, n_comm);

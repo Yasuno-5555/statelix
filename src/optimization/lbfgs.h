@@ -16,6 +16,7 @@
 #include <cmath>
 #include <memory>
 #include "objective.h"
+#include "penalizer.h"
 
 namespace statelix {
 

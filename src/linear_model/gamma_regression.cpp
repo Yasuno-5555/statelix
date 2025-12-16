@@ -1,4 +1,4 @@
-#include "gamma_regression.h"
+#include "linear_model/gamma_regression.h"
 #include <Eigen/Dense>
 #include <pybind11/pybind11.h>
 #include <pybind11/eigen.h>

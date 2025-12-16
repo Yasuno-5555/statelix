@@ -1,6 +1,5 @@
-/**
- * @file zero_inflated.h
- * @brief Statelix v2.3 - Zero-Inflated Count Models
+#ifndef STATELIX_ZERO_INFLATED_H
+#define STATELIX_ZERO_INFLATED_H
  * 
  * Implements:
  *   - Zero-Inflated Poisson (ZIP)

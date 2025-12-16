@@ -37,6 +37,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <algorithm>
+#include "../stats/math_utils.h"
 
 namespace statelix {
 
@@ -439,7 +440,7 @@ public:
         if (gr.df2 <= 0) gr.df2 = 1;
         
         gr.f_stat = ((rss_restricted - rss_unrestricted) / gr.df1) / (rss_unrestricted / gr.df2);
-        gr.p_value = 1.0 - f_cdf(gr.f_stat, gr.df1, gr.df2);
+        gr.p_value = stats::f_pvalue_approx(gr.f_stat, gr.df1, gr.df2);
         gr.causes = (gr.p_value < 0.05);
         
         return gr;
@@ -741,57 +742,7 @@ private:
         }
     }
     
-    double f_cdf(double f, int df1, int df2) {
-        if (f <= 0) return 0;
-        double x = df1 * f / (df1 * f + df2);
-        return beta_inc(df1 / 2.0, df2 / 2.0, x);
-    }
-    
-    double beta_inc(double a, double b, double x) {
-        if (x < 0 || x > 1) return 0;
-        if (x == 0) return 0;
-        if (x == 1) return 1;
-        
-        double bt = std::exp(std::lgamma(a + b) - std::lgamma(a) - std::lgamma(b) +
-                     a * std::log(x) + b * std::log(1 - x));
-        
-        if (x < (a + 1) / (a + b + 2)) {
-            return bt * beta_cf(a, b, x) / a;
-        } else {
-            return 1 - bt * beta_cf(b, a, 1 - x) / b;
-        }
-    }
-    
-    double beta_cf(double a, double b, double x) {
-        double qab = a + b, qap = a + 1, qam = a - 1;
-        double c = 1, d = 1 - qab * x / qap;
-        if (std::abs(d) < 1e-30) d = 1e-30;
-        d = 1 / d;
-        double h = d;
-        
-        for (int m = 1; m <= 100; ++m) {
-            int m2 = 2 * m;
-            double aa = m * (b - m) * x / ((qam + m2) * (a + m2));
-            d = 1 + aa * d;
-            if (std::abs(d) < 1e-30) d = 1e-30;
-            c = 1 + aa / c;
-            if (std::abs(c) < 1e-30) c = 1e-30;
-            d = 1 / d;
-            h *= d * c;
-            
-            aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
-            d = 1 + aa * d;
-            if (std::abs(d) < 1e-30) d = 1e-30;
-            c = 1 + aa / c;
-            if (std::abs(c) < 1e-30) c = 1e-30;
-            d = 1 / d;
-            double del = d * c;
-            h *= del;
-            
-            if (std::abs(del - 1) < 1e-10) break;
-        }
-        return h;
-    }
+    // Private math functions removed - moved to src/stats/math_utils.h
 };
 
 } // namespace statelix

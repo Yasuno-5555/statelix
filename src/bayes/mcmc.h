@@ -99,7 +99,7 @@ public:
                 // Sample from N(current_x, s_d * cov + epsilon * I)
                 Eigen::VectorXd z(dim);
                 for (int d = 0; d < dim; ++d) z(d) = std_normal(rng_);
-                proposal = current_x + std::sqrt(s_d) * llt.matrixL() * z;
+                proposal = current_x + std::sqrt(s_d) * (llt.matrixL() * z);
             } else {
                 // Non-adaptive: independent Gaussian per dimension
                 for (int d = 0; d < dim; ++d) {

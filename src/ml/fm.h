@@ -11,6 +11,19 @@ namespace statelix {
 
 enum class FMTask { Regression, Classification };
 
+// INT8 Quantized FM Model for Inference
+struct QuantizedFMModel {
+    double w0;
+    QuantizedTensor w_q; // (1 x d) - viewed as matrix for matmul
+    QuantizedTensor V_q; // (d x k)
+    QuantizedTensor V_sq_q; // (d x k) Element-wise squared V
+    FMTask task;
+    
+    // Predict using quantized inputs
+    // Input X_q must be (N x d)
+    std::vector<float> predict(const QuantizedTensor& X_q);
+};
+
 // Factorization Machine Model
 // Uses L-BFGS for optimization
 class FactorizationMachine {
@@ -46,21 +59,7 @@ private:
     };
 
     // --- Quantization Support ---
-    struct QuantizedFMModel; // Forward declaration
     QuantizedFMModel quantize_model() const;
-};
-
-// INT8 Quantized FM Model for Inference
-struct QuantizedFMModel {
-    double w0;
-    QuantizedTensor w_q; // (1 x d) - viewed as matrix for matmul
-    QuantizedTensor V_q; // (d x k)
-    QuantizedTensor V_sq_q; // (d x k) Element-wise squared V
-    FMTask task;
-    
-    // Predict using quantized inputs
-    // Input X_q must be (N x d)
-    std::vector<float> predict(const QuantizedTensor& X_q);
 };
 
 } // namespace statelix

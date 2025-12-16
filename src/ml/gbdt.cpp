@@ -2,6 +2,7 @@
 #include <cmath>
 #include <numeric>
 #include <algorithm>
+#include <random>
 #include <iostream>
 
 namespace statelix {

@@ -1,70 +1,62 @@
-import os
+from setuptools import setup, Extension, find_packages
 import sys
-import subprocess
-from setuptools import setup, Extension
-from setuptools.command.build_ext import build_ext
+import os
+import pybind11
 
-class CMakeExtension(Extension):
-    def __init__(self, name, sourcedir=''):
-        super().__init__(name, sources=[])
-        self.sourcedir = os.path.abspath(sourcedir)
+# Helper to find headers
+src_dir = os.path.abspath('src')
+vendor_dir = os.path.abspath('vendor/eigen')
+pybind_dir = pybind11.get_include()
 
-class CMakeBuild(build_ext):
-    def run(self):
-        try:
-            out = subprocess.check_output(['cmake', '--version'])
-        except OSError:
-            raise RuntimeError(
-                "CMake must be installed to build the following extensions: " +
-                ", ".join(e.name for e in self.extensions)
-            )
+# Helper for platform specific flags
+cxx_args = ['-std=c++17', '-O2', '-D_USE_MATH_DEFINES']
+if sys.platform != 'win32':
+    cxx_args += ['-fPIC']
 
-        for ext in self.extensions:
-            self.build_extension(ext)
-
-    def build_extension(self, ext):
-        extdir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
-        
-        # Configuration (Debug/Release)
-        cfg = 'Debug' if self.debug else 'Release'
-        
-        # CMake Args
-        cmake_args = [
-            f'-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}',
-            f'-DPYTHON_EXECUTABLE={sys.executable}',
-            f'-DCMAKE_BUILD_TYPE={cfg}',
-        ]
-
-        # Multi-config helpers (Windows)
-        build_args = ['--config', cfg]
-
-        # Platform specific flags
-        if sys.platform.startswith("win"):
-            cmake_args += [f'-DCMAKE_LIBRARY_OUTPUT_DIRECTORY_{cfg.upper()}={extdir}']
-            if sys.maxsize > 2**32:
-                cmake_args += ['-A', 'x64']
-            build_args += ['--', '/m']
-        else:
-            build_args += ['--', '-j2']
-
-        # Ensure build dir exists
-        if not os.path.exists(self.build_temp):
-            os.makedirs(self.build_temp)
-            
-        subprocess.check_call(['cmake', ext.sourcedir] + cmake_args, cwd=self.build_temp)
-        subprocess.check_call(['cmake', '--build', '.'] + build_args, cwd=self.build_temp)
+# Define extensions
+ext_modules = [
+    # 1. PSM (Causal)
+    Extension(
+        'statelix.psm',
+        sources=['src/bindings/python_bindings_psm.cpp'],
+        include_dirs=[src_dir, vendor_dir, pybind_dir],
+        extra_compile_args=cxx_args,
+        language='c++'
+    ),
+    # 2. Panel (Econometrics)
+    Extension(
+        'statelix.panel',
+        sources=['src/bindings/python_bindings_panel.cpp'],
+        include_dirs=[src_dir, vendor_dir, pybind_dir],
+        extra_compile_args=cxx_args,
+        language='c++'
+    ),
+    # 3. HMC (Bayes)
+    Extension(
+        'statelix.hmc',
+        sources=['src/bindings/python_bindings_hmc.cpp'],
+        include_dirs=[src_dir, vendor_dir, pybind_dir],
+        extra_compile_args=cxx_args,
+        language='c++'
+    ),
+    # 4. Statelix Core (Legacy/Everything else for now)
+    # We might want to keep the main bindings too, or phase it out?
+    # User said "monolithic.so を諦める" (Give up on monolithic .so)
+    # So we should probably NOT build the main python_bindings.cpp if we are splitting.
+    # But python_bindings.cpp contains OLS, TimeSeries, etc. 
+    # For now, let's include it as 'statelix.core' but it fails to compile often.
+    # The user specifically said "3 modules are ready". 
+    # I will stick to these 3 for the "Release" of *working* stuff.
+]
 
 setup(
     name='statelix',
-    version='2.2.0',
-    packages=['statelix_py', 'statelix_py.core', 'statelix_py.gui', 'statelix_py.models', 'statelix_py.plugins', 'statelix_py.utils'],
-    package_dir={'': '.'},
-    ext_modules=[CMakeExtension('statelix_py.core.statelix_core', sourcedir='.')],
-    cmdclass={'build_ext': CMakeBuild},
+    version='0.1.0',
+    description='High-performance C++ Stat/Econ/ML library with Python bindings',
+    # Packages
+    packages=['statelix'],
+    package_dir={'statelix': 'statelix_pkg'},
+    ext_modules=ext_modules,
+    install_requires=['numpy>=1.21', 'pandas>=1.3', 'scikit-learn>=1.0'],
     zip_safe=False,
-    install_requires=[
-        'numpy>=1.21.0',
-        'pandas>=1.3.0',
-        'pybind11>=2.10.0',
-    ]
 )
