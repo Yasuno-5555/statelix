@@ -1,90 +1,41 @@
+/**
+ * @file negative_binomial.cpp
+ * @brief Negative Binomial Regression using GLMSolver (IRLS)
+ * 
+ * Refactored to use statelix's unified GLM framework.
+ */
 #include "negative_binomial.h"
 #include <Eigen/Dense>
-#include <pybind11/pybind11.h>
-#include <pybind11/eigen.h>
 #include <cmath>
-#include <algorithm>
-#include <limits>
+#include <memory>
+#include "../glm/glm_solver.h"
+#include "../glm/glm_base.h"
 
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
 namespace statelix {
 
-// 正規分布の累積分布関数
-double norm_cdf(double x) {
+// Normal CDF
+static double nb_norm_cdf(double x) {
     return 0.5 * (1.0 + std::erf(x / std::sqrt(2.0)));
 }
 
-// 対数ガンマ関数の近似
-double lgamma_approx(double x) {
-    if (x <= 0) return std::numeric_limits<double>::infinity();
-    return std::lgamma(x);
-}
-
-// 負の二項分布の対数尤度
-double negbin_log_likelihood(const VectorXd& y, const VectorXd& mu, double theta) {
-    double ll = 0.0;
+// θ estimation from moment method
+static double estimate_theta_from_residuals(const VectorXd& y, const VectorXd& mu) {
     int n = y.size();
-    
-    for (int i = 0; i < n; ++i) {
-        double yi = y(i);
-        double mui = mu(i);
-        
-        // log P(Y=y|mu,theta) = lgamma(y+theta) - lgamma(theta) - lgamma(y+1)
-        //                      + theta*log(theta) - theta*log(theta+mu)
-        //                      + y*log(mu) - y*log(theta+mu)
-        
-        ll += lgamma_approx(yi + theta) - lgamma_approx(theta) - lgamma_approx(yi + 1.0);
-        ll += theta * std::log(theta / (theta + mui));
-        ll += yi * std::log(mui / (theta + mui));
-    }
-    
-    return ll;
-}
-
-// 負の二項デビアンスの計算
-double negbin_deviance(const VectorXd& y, const VectorXd& mu, double theta) {
-    double dev = 0.0;
-    int n = y.size();
-    
-    for (int i = 0; i < n; ++i) {
-        double yi = y(i);
-        double mui = mu(i);
-        
-        if (yi > 0) {
-            dev += 2.0 * (yi * std::log(yi / mui) - (yi + theta) * std::log((yi + theta) / (mui + theta)));
-        } else {
-            dev += 2.0 * theta * std::log(theta / (mui + theta));
-        }
-    }
-    
-    return dev;
-}
-
-// θパラメータの推定（モーメント法）
-double estimate_theta_moment(const VectorXd& y, const VectorXd& mu) {
-    int n = y.size();
-    
-    // Var(Y) = mu + mu^2/theta
-    // theta = mu^2 / (Var(Y) - mu)
-    
     double mean_y = y.mean();
     double var_y = (y.array() - mean_y).square().sum() / (n - 1.0);
-    
     double mean_mu = mu.mean();
     
-    double theta_est = mean_mu * mean_mu / std::max(1e-6, var_y - mean_mu);
-    
-    // θは正の値である必要がある
-    if (theta_est <= 0 || std::isnan(theta_est) || std::isinf(theta_est)) {
-        theta_est = 1.0;
+    double theta = mean_mu * mean_mu / std::max(1e-6, var_y - mean_mu);
+    if (theta <= 0 || std::isnan(theta) || std::isinf(theta)) {
+        theta = 1.0;
     }
-    
-    return theta_est;
+    return std::clamp(theta, 0.01, 1000.0);
 }
 
-// 負の二項回帰のフィッティング
+// Negative Binomial Regression using GLMSolver
 NegativeBinomialResult fit_negative_binomial(
     const MatrixXd& X,
     const VectorXd& y,
@@ -97,183 +48,68 @@ NegativeBinomialResult fit_negative_binomial(
 ) {
     int n = X.rows();
     int p_original = X.cols();
+    (void)offset;  // Not supported in current GLMSolver
     
+    // Use GLMSolver with NegativeBinomialFamily
+    auto nb_family = std::make_unique<NegativeBinomialFamily>(theta_init);
+    
+    DenseGLMSolver solver;
+    solver.family = std::move(nb_family);
+    solver.link = std::make_unique<LogLink>();
+    solver.fit_intercept = fit_intercept;
+    solver.max_iter = max_iter;
+    solver.tol = tol;
+    solver.conf_level = conf_level;
+    
+    GLMResult glm_result = solver.fit(X, y);
+    
+    // Convert to NegativeBinomialResult
     NegativeBinomialResult result;
-    result.n_obs = n;
+    result.n_obs = glm_result.n_obs;
+    result.n_params = glm_result.n_params + 1;  // +1 for theta
+    result.coef = glm_result.coef;
+    result.intercept = glm_result.intercept;
+    result.std_errors = glm_result.std_errors;
+    result.fitted_values = glm_result.fitted_values;
+    result.linear_predictors = glm_result.linear_predictors;
+    result.deviance_residuals = glm_result.deviance_residuals;
+    result.pearson_residuals = glm_result.pearson_residuals;
+    result.deviance = glm_result.deviance;
+    result.null_deviance = glm_result.null_deviance;
+    result.log_likelihood = glm_result.log_likelihood;
+    result.pseudo_r_squared = glm_result.pseudo_r_squared;
+    result.aic = glm_result.aic;
+    result.bic = glm_result.bic;
+    result.vcov = glm_result.vcov;
+    result.iterations = glm_result.iterations;
+    result.converged = glm_result.converged;
     
-    // オフセットの処理
-    VectorXd offset_vec;
-    if (offset.size() == 0) {
-        offset_vec = VectorXd::Zero(n);
-    } else {
-        offset_vec = offset;
-    }
+    // Re-estimate theta from fitted values
+    result.theta = estimate_theta_from_residuals(y, glm_result.fitted_values);
     
-    // デザイン行列の作成
-    MatrixXd X_design;
-    if (fit_intercept) {
-        X_design.resize(n, p_original + 1);
-        X_design.col(0) = VectorXd::Ones(n);
-        X_design.rightCols(p_original) = X;
-    } else {
-        X_design = X;
-    }
+    // z-values and p-values
+    int p = result.coef.size();
+    result.z_values.resize(p);
+    result.p_values.resize(p);
+    result.conf_int.resize(p, 2);
     
-    int p = X_design.cols();
-    result.n_params = p + 1; // β + θ
-    
-    // 初期値
-    VectorXd beta = VectorXd::Zero(p);
-    VectorXd eta = X_design * beta + offset_vec;
-    VectorXd mu = eta.array().exp();
-    
-    double theta = theta_init;
-    
-    // ヌルモデル
-    double y_mean = y.mean();
-    VectorXd mu_null = VectorXd::Constant(n, y_mean);
-    result.null_deviance = negbin_deviance(y, mu_null, theta);
-    
-    // IRLS with theta estimation
-    result.converged = false;
-    for (int iter = 0; iter < max_iter; ++iter) {
-        result.iterations = iter + 1;
-        
-        // θの更新（モーメント法）
-        theta = estimate_theta_moment(y, mu);
-        theta = std::max(0.01, std::min(theta, 1000.0)); // 安定性のため範囲制限
-        
-        // 重み: W = mu / (1 + mu/theta)
-        VectorXd W(n);
-        for (int i = 0; i < n; ++i) {
-            W(i) = mu(i) / (1.0 + mu(i) / theta);
-            if (W(i) < 1e-12) W(i) = 1e-12;
-        }
-        
-        // 作業応答変数: z = eta + (y - mu) / mu * (1 + mu/theta)
-        VectorXd z(n);
-        for (int i = 0; i < n; ++i) {
-            z(i) = eta(i) + (y(i) - mu(i)) / mu(i) * (1.0 + mu(i) / theta);
-        }
-        
-        // 重み付き最小二乗法
-        MatrixXd XtW = X_design.transpose() * W.asDiagonal();
-        MatrixXd XtWX = XtW * X_design;
-        VectorXd XtWz = XtW * z;
-        
-        VectorXd beta_new = XtWX.ldlt().solve(XtWz);
-        
-        // 収束判定
-        if ((beta_new - beta).norm() < tol) {
-            beta = beta_new;
-            result.converged = true;
-            break;
-        }
-        
-        beta = beta_new;
-        eta = X_design * beta + offset_vec;
-        mu = eta.array().exp();
-    }
-    
-    // 最終結果
-    result.theta = theta;
-    result.linear_predictors = eta;
-    result.fitted_values = mu;
-    
-    // 係数の抽出
-    if (fit_intercept) {
-        result.intercept = beta(0);
-        result.coef = beta.tail(p_original);
-    } else {
-        result.intercept = 0.0;
-        result.coef = beta;
-    }
-    
-    // デビアンス残差
-    result.deviance_residuals.resize(n);
-    for (int i = 0; i < n; ++i) {
-        double sign = (y(i) > mu(i)) ? 1.0 : -1.0;
-        double di = 0.0;
-        if (y(i) > 0) {
-            di = 2.0 * (y(i) * std::log(y(i) / mu(i)) 
-                - (y(i) + theta) * std::log((y(i) + theta) / (mu(i) + theta)));
-        } else {
-            di = 2.0 * theta * std::log(theta / (mu(i) + theta));
-        }
-        result.deviance_residuals(i) = sign * std::sqrt(std::abs(di));
-    }
-    
-    // ピアソン残差
-    result.pearson_residuals.resize(n);
-    for (int i = 0; i < n; ++i) {
-        double var_i = mu(i) + mu(i) * mu(i) / theta;
-        result.pearson_residuals(i) = (y(i) - mu(i)) / std::sqrt(var_i);
-    }
-    
-    // デビアンスと尤度
-    result.deviance = negbin_deviance(y, mu, theta);
-    result.log_likelihood = negbin_log_likelihood(y, mu, theta);
-    
-    // 擬似R²
-    result.pseudo_r_squared = 1.0 - (result.deviance / result.null_deviance);
-    
-    // AIC, BIC
-    result.aic = -2.0 * result.log_likelihood + 2.0 * result.n_params;
-    result.bic = -2.0 * result.log_likelihood + result.n_params * std::log(static_cast<double>(n));
-    
-    // 分散共分散行列（Fisher情報行列の逆行列）
-    VectorXd W_final(n);
-    for (int i = 0; i < n; ++i) {
-        W_final(i) = mu(i) / (1.0 + mu(i) / theta);
-        if (W_final(i) < 1e-12) W_final(i) = 1e-12;
-    }
-    MatrixXd Fisher = X_design.transpose() * W_final.asDiagonal() * X_design;
-    result.vcov = Fisher.ldlt().solve(MatrixXd::Identity(p, p));
-    
-    // 標準誤差
-    VectorXd se_all(p);
-    for (int i = 0; i < p; ++i) {
-        se_all(i) = std::sqrt(std::max(0.0, result.vcov(i, i)));
-    }
-    
-    if (fit_intercept) {
-        result.std_errors = se_all.tail(p_original);
-    } else {
-        result.std_errors = se_all;
-    }
-    
-    // z統計量とp値
-    result.z_values.resize(p_original);
-    result.p_values.resize(p_original);
-    
-    for (int i = 0; i < p_original; ++i) {
-        int idx = fit_intercept ? i + 1 : i;
-        result.z_values(i) = beta(idx) / se_all(idx);
-        
-        double z_abs = std::abs(result.z_values(i));
-        double p_one_sided = 1.0 - norm_cdf(z_abs);
-        result.p_values(i) = 2.0 * p_one_sided;
-    }
-    
-    // 信頼区間
     double z_crit = 1.96;
-    if (conf_level == 0.99) {
-        z_crit = 2.576;
-    } else if (conf_level == 0.90) {
-        z_crit = 1.645;
-    }
+    if (conf_level > 0.99) z_crit = 2.576;
+    else if (conf_level < 0.95) z_crit = 1.645;
     
-    result.conf_int.resize(p_original, 2);
-    for (int i = 0; i < p_original; ++i) {
-        double margin = z_crit * result.std_errors(i);
-        result.conf_int(i, 0) = result.coef(i) - margin;
-        result.conf_int(i, 1) = result.coef(i) + margin;
+    for (int i = 0; i < p; ++i) {
+        double se = (result.std_errors.size() > i) ? result.std_errors(i) : 1.0;
+        result.z_values(i) = result.coef(i) / std::max(se, 1e-10);
+        double z_abs = std::abs(result.z_values(i));
+        result.p_values(i) = 2.0 * (1.0 - nb_norm_cdf(z_abs));
+        result.conf_int(i, 0) = result.coef(i) - z_crit * se;
+        result.conf_int(i, 1) = result.coef(i) + z_crit * se;
     }
     
     return result;
 }
 
-// 予測関数
+// Prediction function
 VectorXd predict_negative_binomial(
     const NegativeBinomialResult& result,
     const MatrixXd& X_new,

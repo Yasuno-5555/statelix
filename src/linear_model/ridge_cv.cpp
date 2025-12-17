@@ -1,10 +1,9 @@
 #include <Eigen/Dense>
-#include <pybind11/pybind11.h>
-#include <pybind11/eigen.h>
 #include <cmath>
 #include <vector>
 #include <algorithm>
 #include <limits>
+#include "solver.h"
 
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
@@ -22,7 +21,7 @@ struct RidgeCVResult {
     std::vector<double> gcv_scores;      // 一般化クロスバリデーションスコア
 };
 
-// Ridge回帰の基本ソルバー
+// Ridge回帰の基本ソルバー (WeightedSolver使用)
 VectorXd ridge_solver_internal(
     const MatrixXd& X,
     const VectorXd& y,
@@ -33,35 +32,38 @@ VectorXd ridge_solver_internal(
     int p_original = X.cols();
     
     MatrixXd X_design;
-    VectorXd y_work;
-    
     if (fit_intercept) {
         X_design.resize(n, p_original + 1);
         X_design.col(0) = VectorXd::Ones(n);
         X_design.rightCols(p_original) = X;
-        y_work = y;
     } else {
         X_design = X;
-        y_work = y;
     }
     
     int p = X_design.cols();
     
-    MatrixXd XtX = X_design.transpose() * X_design;
+    // Use WeightedSolver with unit weights
+    VectorXd weights = VectorXd::Ones(n);
+    WeightedDesignMatrix wdm(X_design, weights);
     
-    // 切片にはペナルティを適用しない
-    MatrixXd penalty = MatrixXd::Zero(p, p);
+    // Compute X^T X + λI manually, then use LDLT
+    MatrixXd XtX = wdm.compute_gram();
+    
+    // Add ridge penalty (skip intercept)
     if (fit_intercept) {
-        penalty.bottomRightCorner(p_original, p_original) = 
-            lambda * MatrixXd::Identity(p_original, p_original);
+        for (int j = 1; j < p; ++j) {
+            XtX(j, j) += lambda;
+        }
     } else {
-        penalty = lambda * MatrixXd::Identity(p, p);
+        for (int j = 0; j < p; ++j) {
+            XtX(j, j) += lambda;
+        }
     }
     
-    MatrixXd A = XtX + penalty;
-    VectorXd Xty = X_design.transpose() * y_work;
+    VectorXd Xty = wdm.compute_XTWy(y);
     
-    return A.ldlt().solve(Xty);
+    // Solve via LDLT (numerically stable)
+    return XtX.ldlt().solve(Xty);
 }
 
 // 一般化クロスバリデーション (GCV) スコアの計算
@@ -102,11 +104,13 @@ double compute_gcv(
         penalty = lambda * MatrixXd::Identity(p, p);
     }
     
-    MatrixXd A_inv = (XtX + penalty).inverse();
+    MatrixXd A_inv = (XtX + penalty).ldlt().solve(MatrixXd::Identity(p, p));
     double df = (A_inv * XtX).trace();
     
     // GCVスコア: RSS / (n * (1 - df/n)^2)
-    double gcv = rss / (n * std::pow(1.0 - df / n, 2.0));
+    double denom = 1.0 - df / n;
+    if (std::abs(denom) < 1e-10) return std::numeric_limits<double>::infinity();
+    double gcv = rss / (n * denom * denom);
     
     return gcv;
 }
@@ -125,13 +129,11 @@ std::pair<double, double> cross_validate_ridge(
     std::vector<double> fold_errors;
     
     for (int fold = 0; fold < n_folds; ++fold) {
-        // テストセットのインデックス
         int test_start = fold * fold_size;
         int test_end = (fold == n_folds - 1) ? n : (fold + 1) * fold_size;
         int test_size = test_end - test_start;
         int train_size = n - test_size;
         
-        // 訓練セットとテストセットに分割
         MatrixXd X_train(train_size, X.cols());
         VectorXd y_train(train_size);
         MatrixXd X_test(test_size, X.cols());
@@ -152,10 +154,8 @@ std::pair<double, double> cross_validate_ridge(
             }
         }
         
-        // 訓練
         VectorXd beta = ridge_solver_internal(X_train, y_train, lambda, fit_intercept);
         
-        // テストセットで予測
         MatrixXd X_test_design;
         int p_original = X.cols();
         if (fit_intercept) {
@@ -168,22 +168,16 @@ std::pair<double, double> cross_validate_ridge(
         
         VectorXd y_pred = X_test_design * beta;
         
-        // MSEを計算
         double mse = (y_test - y_pred).squaredNorm() / test_size;
         fold_errors.push_back(mse);
     }
     
-    // 平均と標準偏差
     double mean_error = 0.0;
-    for (double err : fold_errors) {
-        mean_error += err;
-    }
+    for (double err : fold_errors) mean_error += err;
     mean_error /= fold_errors.size();
     
     double std_error = 0.0;
-    for (double err : fold_errors) {
-        std_error += std::pow(err - mean_error, 2.0);
-    }
+    for (double err : fold_errors) std_error += std::pow(err - mean_error, 2.0);
     std_error = std::sqrt(std_error / fold_errors.size());
     
     return std::make_pair(mean_error, std_error);
@@ -200,10 +194,8 @@ RidgeCVResult fit_ridge_cv(
 ) {
     RidgeCVResult result;
     
-    // λの値を決定
     std::vector<double> lambdas;
     if (lambda_values.empty()) {
-        // デフォルト: 対数スケールで10個
         for (int i = 0; i < 10; ++i) {
             lambdas.push_back(std::pow(10.0, -2.0 + i * 0.5));
         }
@@ -213,34 +205,25 @@ RidgeCVResult fit_ridge_cv(
     
     result.lambda_path = lambdas;
     
-    // 各λに対してスコアを計算
     for (double lambda : lambdas) {
         if (use_gcv) {
-            // GCVスコア
             double gcv = compute_gcv(X, y, lambda, fit_intercept);
             result.gcv_scores.push_back(gcv);
-            result.cv_scores.push_back(gcv);  // 互換性のため
+            result.cv_scores.push_back(gcv);
             result.cv_std.push_back(0.0);
         } else {
-            // K-fold CV
-            auto [cv_score, cv_std] = cross_validate_ridge(
-                X, y, lambda, n_folds, fit_intercept
-            );
+            auto [cv_score, cv_std] = cross_validate_ridge(X, y, lambda, n_folds, fit_intercept);
             result.cv_scores.push_back(cv_score);
             result.cv_std.push_back(cv_std);
-            
-            // GCVも計算（参考用）
             double gcv = compute_gcv(X, y, lambda, fit_intercept);
             result.gcv_scores.push_back(gcv);
         }
     }
     
-    // 最小スコアのλを選択
     auto min_it = std::min_element(result.cv_scores.begin(), result.cv_scores.end());
     int best_idx = std::distance(result.cv_scores.begin(), min_it);
     result.best_lambda = lambdas[best_idx];
     
-    // 最適λで全データを使って再フィット
     VectorXd beta_all = ridge_solver_internal(X, y, result.best_lambda, fit_intercept);
     
     int p_original = X.cols();

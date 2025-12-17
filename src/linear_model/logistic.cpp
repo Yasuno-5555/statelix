@@ -1,80 +1,81 @@
+/**
+ * @file logistic.cpp
+ * @brief Logistic Regression using GLMSolver (IRLS)
+ * 
+ * Refactored to use statelix's unified GLM framework.
+ */
 #include <Eigen/Dense>
 #include <cmath>
-#include <limits>
-#include <stdexcept>
-#include "../glm/glm_models.h"
+#include <memory>
+#include "../glm/glm_solver.h"
+#include "../glm/glm_base.h"
 
 namespace statelix {
 
-inline double sigmoid(double z) {
-    if (z >= 0) {
-        double ez = std::exp(-z);
-        return 1.0 / (1.0 + ez);
-    } else {
-        double ez = std::exp(z);
-        return ez / (1.0 + ez);
+struct LogisticResult {
+    Eigen::VectorXd coef;
+    double intercept = 0.0;
+    int iterations;
+    bool converged;
+    double deviance = 0.0;
+    double aic = 0.0;
+};
+
+class LogisticRegression {
+public:
+    int max_iter = 100;
+    double tol = 1e-6;
+    bool fit_intercept = true;
+    
+    LogisticResult fit(
+        const Eigen::MatrixXd& X,
+        const Eigen::VectorXd& y
+    ) {
+        // Use GLMSolver with Binomial family and Logit link
+        DenseGLMSolver solver;
+        solver.family = std::make_unique<BinomialFamily>();
+        solver.link = std::make_unique<LogitLink>();
+        solver.fit_intercept = fit_intercept;
+        solver.max_iter = max_iter;
+        solver.tol = tol;
+        
+        GLMResult glm_result = solver.fit(X, y);
+        
+        // Convert to LogisticResult
+        LogisticResult result;
+        result.coef = glm_result.coef;
+        result.intercept = glm_result.intercept;
+        result.iterations = glm_result.iterations;
+        result.converged = glm_result.converged;
+        result.deviance = glm_result.deviance;
+        result.aic = glm_result.aic;
+        
+        return result;
     }
-}
-
-LogisticResult LogisticRegression::fit(
-    const Eigen::MatrixXd& X,
-    const Eigen::VectorXd& y
-) {
-    int n = X.rows();
-    int p = X.cols();
-
-    Eigen::VectorXd beta = Eigen::VectorXd::Zero(p);
-    Eigen::VectorXd eta(n), mu(n), z(n), w(n);
-
-    LogisticResult result;
-    result.iterations = 0;
-    result.converged = false;
-
-    for (int iter = 0; iter < max_iter; iter++) {
-        result.iterations = iter + 1;
-
-        eta = X * beta;
-
-        for (int i = 0; i < n; i++) {
-            mu(i) = sigmoid(eta(i));
-            double m = mu(i);
-            w(i) = m * (1.0 - m);
-
-            if (w(i) < 1e-12) w(i) = 1e-12;
-
-            z(i) = eta(i) + (y(i) - m) / w(i);
+    
+    Eigen::VectorXd predict_prob(
+        const Eigen::MatrixXd& X,
+        const Eigen::VectorXd& coef,
+        double intercept = 0.0
+    ) {
+        Eigen::VectorXd eta = X * coef;
+        if (fit_intercept) {
+            eta.array() += intercept;
         }
-
-        Eigen::MatrixXd W = w.asDiagonal();
-        Eigen::MatrixXd XtW = X.transpose() * W;
-        Eigen::MatrixXd XtWX = XtW * X;
-        Eigen::VectorXd XtWz = XtW * z;
-
-        Eigen::VectorXd beta_new = XtWX.ldlt().solve(XtWz);
-
-        if ((beta_new - beta).norm() < tol) {
-            beta = beta_new;
-            result.converged = true;
-            break;
+        
+        // Apply logistic function
+        Eigen::VectorXd probs(eta.size());
+        for (int i = 0; i < eta.size(); ++i) {
+            if (eta(i) >= 0) {
+                double ez = std::exp(-eta(i));
+                probs(i) = 1.0 / (1.0 + ez);
+            } else {
+                double ez = std::exp(eta(i));
+                probs(i) = ez / (1.0 + ez);
+            }
         }
-
-        beta = beta_new;
+        return probs;
     }
-
-    result.coef = beta;
-    return result;
-}
-
-Eigen::VectorXd LogisticRegression::predict_prob(
-    const Eigen::MatrixXd& X,
-    const Eigen::VectorXd& coef
-) {
-    Eigen::VectorXd eta = X * coef;
-    Eigen::VectorXd probs(eta.size());
-    for (int i = 0; i < eta.size(); ++i) {
-        probs(i) = sigmoid(eta(i));
-    }
-    return probs;
-}
+};
 
 } // namespace statelix
