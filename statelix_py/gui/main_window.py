@@ -365,6 +365,10 @@ class MainWindow(QMainWindow):
         classic_layout.addWidget(splitter)
         self.mode_tabs.addTab(classic_widget, "🛠️ Expert Mode")
         
+        # --- Connect WASM plugins to model panel ---
+        if self.loaded_plugins:
+            self.model_panel.add_wasm_plugins(self.loaded_plugins)
+        
         self.statusBar().showMessage("Ready")
 
     def run_analysis(self, params):
@@ -478,4 +482,5 @@ class MainWindow(QMainWindow):
 
     def reload_plugins(self):
         self.loaded_plugins = self.plugin_loader.scan_and_load()
+        self.model_panel.add_wasm_plugins(self.loaded_plugins)
         QMessageBox.information(self, "Plugins", f"Reloaded. Found {len(self.loaded_plugins)} plugins.")

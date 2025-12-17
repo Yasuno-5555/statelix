@@ -7,15 +7,18 @@
 namespace statelix {
 
 struct DTWResult {
-    double distance;
-    Eigen::MatrixXd cost_matrix; // Optional: usually too big to return, but useful for debug
-    std::vector<std::pair<int, int>> path; // Indices (i, j)
+  double distance;
+  Eigen::MatrixXd cost_matrix; // Optional: only populated if compute_path=true
+  std::vector<std::pair<int, int>> path; // Indices (i, j)
 };
 
 class DTW {
 public:
-    // Basic Euclidean DTW
-    DTWResult compute(const Eigen::VectorXd& s1, const Eigen::VectorXd& s2);
+  int sakoe_chiba_band = -1; // -1 = auto (10% of max length)
+  bool compute_path = true;  // Set false for speed when path not needed
+
+  // Euclidean DTW with Sakoe-Chiba band optimization
+  DTWResult compute(const Eigen::VectorXd &s1, const Eigen::VectorXd &s2);
 };
 
 } // namespace statelix
