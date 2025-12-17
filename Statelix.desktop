@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Statelix
+Comment=Advanced Stat/Econ/ML Tool
+Exec=/home/yasuno/デスクトップ/Projects/statelix/launcher.sh
+Icon=utilities-terminal
+Terminal=false
+Categories=Science;DataVisualization;
+Path=/home/yasuno/デスクトップ/Projects/statelix

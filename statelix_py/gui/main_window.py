@@ -4,6 +4,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 
 from statelix_py.gui.panels.inquiry_panel import InquiryPanel
+from statelix_py.gui.panels.data_panel import DataPanel
+from statelix_py.gui.panels.model_panel import ModelPanel
+from statelix_py.gui.panels.result_panel import ResultPanel
+from statelix_py.gui.panels.plot_panel import PlotPanel
+from statelix_py.gui.panels.exploratory_panel import ExploratoryPanel
 
 # --- Worker Thread for Analysis ---
 class AnalysisWorker(QThread):
@@ -44,37 +49,37 @@ class AnalysisWorker(QThread):
                 
                 # 1. Drivers (Association)
                 if q_id == 1:
-                    # Simple OLS for now
-                    # We use cpp_binding.fit_ols_full(X, y)
-                    # But Storyteller expects an object.
-                    # Use a mock or Python wrapper? 
-                    # Let's use pure python Causal model as a placeholder or proper OLS if available.
-                    # Ideally: `statelix.linear_model.OLS` but C++ is disabled.
-                    # Use Mock/Simple Python OLS for Inquiry?
-                    # Or reuse IV2SLS with no instrument? no.
-                    # Let's use CausalAdapter with a mock for now or implement PythonOLS.
-                    # Or simpler: Just do Correlation analysis?
-                    # "What drives Y?" -> usually Lasso or OLS.
-                    
-                    # Implementation: Use Numpy OLS
+                    # "What drives Y?" -> OLS Analysis with Narrative
                     import statsmodels.api as sm
                     X_aug = sm.add_constant(X)
                     ols = sm.OLS(Y, X_aug).fit()
                     
-                    # Adapt to Statelix Storyteller
-                    # We need an adapter for statsmodels or map it manually.
-                    # Storyteller supports: .coef_, .aic, etc.
-                    # statsmodels result has params, aic.
+                    # Generate Rich Narrative
+                    coef = ols.params[1] if len(ols.params) > 1 else 0
+                    pval = ols.pvalues[1] if len(ols.pvalues) > 1 else 1
+                    r2 = ols.rsquared
                     
-                    # Wrapper class to look like Statelix model
-                    class SMWrapper:
-                        def __init__(self, res):
-                            self.coef_ = res.params
-                            self.aic = res.aic
-                            self.r2 = res.rsquared
-                            
-                    story = Storyteller(SMWrapper(ols), feature_names=["Intercept", x_col])
-                    narrative = story.explain()
+                    sig_indicator = "🟢 Significant" if pval < 0.05 else "🟡 Not Significant"
+                    direction = "positively" if coef > 0 else "negatively"
+                    
+                    narrative = f"## Driver Analysis: {x_col} → {y_col}\n\n"
+                    narrative += f"**Question**: What drives **{y_col}**?\n\n"
+                    narrative += f"### Key Finding\n"
+                    narrative += f"> For every 1-unit increase in **{x_col}**, **{y_col}** is expected to change by **{coef:+.4f}** units.\n\n"
+                    
+                    narrative += f"### Statistical Evidence\n"
+                    narrative += f"- **Coefficient**: {coef:.4f}\n"
+                    narrative += f"- **P-Value**: {pval:.4f} ({sig_indicator})\n"
+                    narrative += f"- **Model Fit (R²)**: {r2:.2%}\n\n"
+                    
+                    if pval < 0.05:
+                        narrative += f"> ✅ There is strong statistical evidence that **{x_col}** {direction} affects **{y_col}**.\n"
+                    else:
+                        narrative += f"> ⚠️ The relationship between **{x_col}** and **{y_col}** is not statistically significant at the 5% level. Consider adding more data or exploring other variables.\n"
+                    
+                    # Visual: Scatter Plot for Drivers
+                    result_data['viz_type'] = 'Drivers'
+                    result_data['viz_data'] = {'X': X, 'Y': Y, 'x_col': x_col, 'y_col': y_col}
                     
                 # 2. Causal Inference
                 elif q_id == 2:
@@ -125,11 +130,67 @@ class AnalysisWorker(QThread):
 
                 # 3. WhatIf
                 elif q_id == 3:
-                     # Counterfactual
-                     # Needs a fitted model.
-                     # Fit OLS/IV then simulate.
-                     pass
-                     narrative = "What-If Simulation Engine ... (Coming Soon)"
+                     # Counterfactual Simulation using OLS
+                     import statsmodels.api as sm
+                     import pandas as pd
+                     
+                     # Fit Base Model: Y ~ X + Z (if Z exists)
+                     if z_col:
+                         X_model = self.df[[x_col, z_col]]
+                     else:
+                         X_model = self.df[[x_col]]
+                         
+                     X_aug = sm.add_constant(X_model)
+                     model_fit = sm.OLS(Y, X_aug).fit()
+                     
+                     # Predict Baseline
+                     y_pred_base = model_fit.predict(X_aug)
+                     
+                     # Create Counterfactual Data
+                     X_sim = X_model.copy()
+                     sim_type = self.params.get('sim_type', '')
+                     sim_val = self.params.get('sim_val', 0.0)
+                     
+                     if "Increase by %" in sim_type:
+                         X_sim[x_col] = X_sim[x_col] * (1 + sim_val / 100.0)
+                         change_desc = f"increased by {sim_val}%"
+                     elif "Decrease by %" in sim_type:
+                         X_sim[x_col] = X_sim[x_col] * (1 - sim_val / 100.0)
+                         change_desc = f"decreased by {sim_val}%"
+                     elif "Set to Value" in sim_type:
+                         X_sim[x_col] = sim_val
+                         change_desc = f"was set to {sim_val}"
+                     elif "Increase by Value" in sim_type:
+                         X_sim[x_col] = X_sim[x_col] + sim_val
+                         change_desc = f"increased by {sim_val} (absolute)"
+                     else:
+                         change_desc = "changed"
+                         
+                     # Predict Counterfactual
+                     X_sim_aug = sm.add_constant(X_sim) # Constant must match dimensions
+                     # Careful with const addition if X_sim changed index/order? No, just copy.
+                     # sm.add_constant adds 'const' column.
+                     
+                     y_pred_sim = model_fit.predict(X_sim_aug)
+                     
+                     # Calculate Impact
+                     diff = y_pred_sim - y_pred_base
+                     mean_diff = np.mean(diff)
+                     total_diff = np.sum(diff)
+                     
+                     # Narrative Generation
+                     narrative = f"### What-If Simulation Results\n"
+                     narrative += f"**Scenario**: If **{x_col}** is {change_desc}...\n\n"
+                     narrative += f"> The outcome **{y_col}** is expected to change by **{mean_diff:+.2f}** (on average).\n"
+                     narrative += f"> **Total Impact**: {total_diff:+.2f} over the entire dataset.\n\n"
+                     
+                     # Visual Data (Before vs After distribution)
+                     result_data['viz_type'] = 'WhatIf'
+                     result_data['viz_data'] = {
+                         'Y_base': y_pred_base,
+                         'Y_sim': y_pred_sim,
+                         'Label': f"After {x_col} change"
+                     }
 
                 result_data["type"] = "inquiry"
                 result_data["narrative"] = narrative
@@ -295,75 +356,136 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Statelix v2.3 - Explanatory Intelligence")
-        self.resize(1200, 800)
+        self.resize(1100, 700) # Adjusted for smaller screens
         self.worker = None # Keep reference
+        
+        # Enable Advanced Docking
+        from PySide6.QtWidgets import QMainWindow
+        self.setDockOptions(
+            QMainWindow.DockOption.AllowNestedDocks | 
+            QMainWindow.DockOption.AllowTabbedDocks | 
+            QMainWindow.DockOption.AnimatedDocks
+        )
+        
+        
+        
+        # --- Apply Theme ---
+        # --- Apply Theme ---
+        from statelix_py.gui.styles import StatelixTheme
+        self.setStyleSheet(StatelixTheme.DARK_STYLESHEET)
         
         self.init_ui()
 
-        # Top Level Tabs for Modes
+    def show_toast(self, message, duration=3000):
+        from statelix_py.gui.components.toast import Toast
+        # Create a new toast
+        t = Toast(self, message, duration)
+        t.show_toast()
+
+    def init_ui(self):
+        from PySide6.QtWidgets import QTabWidget, QWidget, QVBoxLayout, QHBoxLayout, QSplitter
+        from PySide6.QtCore import Qt
+        # Removed FlexiblePanel due to usability issues - Reverting to Standard Splitter
+
+        # --- Central Widget: Mode Tabs ---
         self.mode_tabs = QTabWidget()
         self.setCentralWidget(self.mode_tabs)
+        # self.mode_tabs.currentChanged.connect(self.on_mode_changed) # Not needed for Splitter layout usually
+
+        # --- TAB 1: Expert Work Area ---
+        expert_widget = QWidget()
+        expert_layout = QVBoxLayout(expert_widget)
+        expert_layout.setContentsMargins(0, 0, 0, 0)
         
-        # --- Plugins (Load First) ---
+        # Main Layout (Fixed Horizontal)
+        # User requested fixed boundaries to prevent issues
+        main_layout = QHBoxLayout() # No splitter handles
+        
+        # 1. Left Column (Vertical Layout: Data / Inspector)
+        left_column = QWidget()
+        left_layout = QVBoxLayout(left_column)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        
+        from statelix_py.gui.panels.data_panel import DataPanel
+        from statelix_py.gui.panels.variable_inspector import VariableInspector
+        
+        self.data_panel = DataPanel()
+        self.inspector_panel = VariableInspector()
+        
+        left_layout.addWidget(self.data_panel, stretch=2)
+        left_layout.addWidget(self.inspector_panel, stretch=1)
+        
+        # 2. Middle Column (Model)
+        from statelix_py.gui.panels.model_panel import ModelPanel
+        self.model_panel = ModelPanel()
+        
+        # 3. Right Column (Results Tabs)
+        from statelix_py.gui.panels.result_panel import ResultPanel
+        from statelix_py.gui.panels.plot_panel import PlotPanel
+        from statelix_py.gui.panels.exploratory_panel import ExploratoryPanel
+        
+        self.expert_center = QTabWidget() # Internal tabs for output
+        self.result_panel = ResultPanel()
+        self.plot_panel = PlotPanel()
+        self.exploratory_panel = ExploratoryPanel()
+        
+        self.expert_center.addTab(self.result_panel, "Result")
+        self.expert_center.addTab(self.plot_panel, "Plots")
+        self.expert_center.addTab(self.exploratory_panel, "EDA")
+        
+        # Add to Main Layout (Fixed Ratios)
+        # Left (Data/Insp) : Middle (Model) : Right (Output)
+        main_layout.addWidget(left_column, stretch=20)   # Approx 20%
+        main_layout.addWidget(self.model_panel, stretch=25) # Approx 25%
+        main_layout.addWidget(self.expert_center, stretch=55) # Approx 55%
+        
+        expert_layout.addLayout(main_layout)
+        self.mode_tabs.addTab(expert_widget, "🛠️ Expert Mode")
+        
+        # --- TAB 2: Inquiry Panel ---
+        from statelix_py.gui.panels.inquiry_panel import InquiryPanel
+        self.inquiry_panel = InquiryPanel()
+        self.mode_tabs.addTab(self.inquiry_panel, "🎓 Inquiry Mode")
+        
+        # --- Connections ---
+        self.data_panel.data_loaded.connect(self.model_panel.update_columns)
+        self.data_panel.data_loaded.connect(self.inspector_panel.set_data)
+        self.data_panel.data_loaded.connect(self.exploratory_panel.on_data_loaded)
+        self.data_panel.data_loaded.connect(self.inquiry_panel.update_columns)
+        
+        self.model_panel.run_requested.connect(self.run_analysis)
+        self.inquiry_panel.run_inquiry.connect(self.run_analysis)
+
+        # --- Plugins (Load Here) ---
         from statelix_py.plugins.loader import WasmPluginLoader
         self.plugin_loader = WasmPluginLoader()
         self.loaded_plugins = self.plugin_loader.scan_and_load()
-        
+
         # --- Menu Bar ---
         menu = self.menuBar()
         file_menu = menu.addMenu("File")
-        plugin_menu = menu.addMenu("Plugins")
         
+        open_action = file_menu.addAction("Open Data File...")
+        open_action.setShortcut("Ctrl+O")
+        open_action.triggered.connect(self.data_panel.load_data)
+        
+        file_menu.addSeparator()
+        
+        exit_action = file_menu.addAction("Exit")
+        exit_action.setShortcut("Ctrl+Q")
+        exit_action.triggered.connect(self.close)
+
+        # Plugins Menu
+        plugin_menu = menu.addMenu("Plugins")
         if not self.loaded_plugins:
              plugin_menu.addAction("No plugins found").setEnabled(False)
         else:
              for name, info in self.loaded_plugins.items():
-                 # sub = plugin_menu.addMenu(name)
-                 # For now just list them
                  plugin_menu.addAction(f"Loaded: {name}").setEnabled(False)
         
         plugin_menu.addSeparator()
         reload_action = plugin_menu.addAction("Reload Plugins")
         reload_action.triggered.connect(self.reload_plugins)
-        
-        # --- Mode 1: Inquiry (New Student GUI) ---
-        self.inquiry_panel = InquiryPanel()
-        self.mode_tabs.addTab(self.inquiry_panel, "🎓 Inquiry Mode")
-        
-        # --- Mode 2: Standard (Expert GUI) ---
-        classic_widget = QWidget()
-        classic_layout = QVBoxLayout(classic_widget)
-        
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        
-        self.data_panel = DataPanel()
-        self.model_panel = ModelPanel()
-        
-        self.output_tabs = QTabWidget()
-        self.result_panel = ResultPanel()
-        self.plot_panel = PlotPanel()
-        self.exploratory_panel = ExploratoryPanel()
-        
-        self.output_tabs.addTab(self.result_panel, "Result")
-        self.output_tabs.addTab(self.plot_panel, "Plots")
-        self.output_tabs.addTab(self.exploratory_panel, "EDA")
-        
-        # Connect Classic
-        self.model_panel.run_requested.connect(self.run_analysis)
-        self.data_panel.data_loaded.connect(self.model_panel.update_columns)
-        self.data_panel.data_loaded.connect(self.exploratory_panel.on_data_loaded)
-        
-        # Connect Inquiry (Also needs data updates)
-        self.data_panel.data_loaded.connect(self.inquiry_panel.update_columns)
-        self.inquiry_panel.run_inquiry.connect(self.run_analysis)
-
-        splitter.addWidget(self.data_panel)
-        splitter.addWidget(self.model_panel)
-        splitter.addWidget(self.output_tabs)
-        splitter.setSizes([200, 250, 350])
-        
-        classic_layout.addWidget(splitter)
-        self.mode_tabs.addTab(classic_widget, "🛠️ Expert Mode")
         
         # --- Connect WASM plugins to model panel ---
         if self.loaded_plugins:
@@ -398,7 +520,30 @@ class MainWindow(QMainWindow):
              viz_type = result.get('viz_type')
              viz_data = result.get('viz_data')
              
-             if viz_type == 'IV':
+             if viz_type == 'Drivers':
+                 def plot_drivers(ax):
+                     import numpy as np
+                     X_d = viz_data['X']
+                     Y_d = viz_data['Y']
+                     x_label = viz_data['x_col']
+                     y_label = viz_data['y_col']
+                     
+                     ax.scatter(X_d, Y_d, alpha=0.5, color='#6C5CE7', label='Data')
+                     
+                     # Fit Line
+                     z = np.polyfit(X_d, Y_d, 1)
+                     p = np.poly1d(z)
+                     x_line = np.linspace(X_d.min(), X_d.max(), 100)
+                     ax.plot(x_line, p(x_line), 'r-', linewidth=2, label='Trend')
+                     
+                     ax.set_xlabel(x_label)
+                     ax.set_ylabel(y_label)
+                     ax.set_title(f"Driver: {x_label} vs {y_label}")
+                     ax.legend()
+                     
+                 self.inquiry_panel.plot_assumption(plot_drivers)
+
+             elif viz_type == 'IV':
                  def plot_iv(ax):
                      # Scatter First Stage
                      ax.scatter(viz_data['Z'], viz_data['X'], alpha=0.5)
@@ -466,6 +611,32 @@ class MainWindow(QMainWindow):
                      
                  self.inquiry_panel.plot_assumption(plot_rdd)
 
+             elif viz_type == 'WhatIf':
+                 def plot_whatif(ax):
+                     Y_base = viz_data['Y_base']
+                     Y_sim = viz_data['Y_sim']
+                     label = viz_data['Label']
+                     
+                     import numpy as np
+                     
+                     # Comparison Plot (Density or Hist)
+                     # Plot Base
+                     ax.hist(Y_base, bins=20, alpha=0.5, label='Original', color='gray')
+                     # Plot Sim
+                     ax.hist(Y_sim, bins=20, alpha=0.5, label='Simulated', color='#6C5CE7')
+                     
+                     # Add Mean Lines
+                     ax.axvline(np.mean(Y_base), color='black', linestyle='--', label='Orig Mean')
+                     ax.axvline(np.mean(Y_sim), color='#6C5CE7', linestyle='--', label='Sim Mean')
+                     
+                     ax.set_xlabel("Predicted Outcome (Y)")
+                     ax.set_ylabel("Frequency")
+                     ax.set_title(f"Simulation Impact: {label}")
+                     ax.legend()
+                     
+                 self.inquiry_panel.plot_assumption(plot_whatif)
+
+
         else:
             # Classic Output
             self.result_panel.display_result(result)
@@ -484,3 +655,13 @@ class MainWindow(QMainWindow):
         self.loaded_plugins = self.plugin_loader.scan_and_load()
         self.model_panel.add_wasm_plugins(self.loaded_plugins)
         QMessageBox.information(self, "Plugins", f"Reloaded. Found {len(self.loaded_plugins)} plugins.")
+
+    def on_mode_changed(self, index):
+        # 0 = Expert, 1 = Inquiry
+        # Hide Docks if Inquiry
+        is_expert = (index == 0)
+        
+        # Check if docks exist before toggling (safe-guard)
+        if hasattr(self, 'dock_data'): self.dock_data.setVisible(is_expert)
+        if hasattr(self, 'dock_model'): self.dock_model.setVisible(is_expert)
+        if hasattr(self, 'dock_inspector'): self.dock_inspector.setVisible(is_expert)

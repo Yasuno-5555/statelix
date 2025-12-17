@@ -39,6 +39,23 @@ class DataPanel(QWidget):
         info_frame.setLayout(info_layout)
         layout.addWidget(info_frame)
 
+        
+        # Tools Layout
+        tools_layout = QHBoxLayout()
+        self.btn_create_col = QPushButton("列作成 (Transform)")
+        self.btn_create_col.clicked.connect(self.on_create_column)
+        self.btn_filter = QPushButton("フィルタ (Filter)")
+        self.btn_filter.clicked.connect(self.on_filter_rows)
+        self.btn_reset = QPushButton("リセット (Reset)")
+        self.btn_reset.clicked.connect(self.on_reset_data)
+        
+        tools_layout.addWidget(self.btn_create_col)
+        tools_layout.addWidget(self.btn_filter)
+        tools_layout.addWidget(self.btn_reset)
+        tools_layout.addStretch()
+        
+        layout.addLayout(tools_layout)
+
         # Actions
         btn_layout = QHBoxLayout()
         self.load_btn = QPushButton("データ読み込み")
@@ -60,37 +77,114 @@ class DataPanel(QWidget):
         layout.addWidget(self.table_view)
 
         self.setLayout(layout)
+        
+        # --- Enable Drop ---
+        self.setAcceptDrops(True)
+        
+        # Keep original data for reset
+        self._original_df = None
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.accept()
+            # Optional: Visual cue (handled by QSS usually)
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        if urls:
+            file_path = urls[0].toLocalFile()
+            if os.path.isfile(file_path):
+                self._load_file_path(file_path)
+
+    def _load_file_path(self, file_path):
+        try:
+            # Load generic
+            if file_path.endswith('.csv'):
+                df = pd.read_csv(file_path)
+            elif file_path.endswith('.xlsx'):
+                df = pd.read_excel(file_path)
+            else:
+                QMessageBox.warning(self, "Invalid File", "Only .csv and .xlsx files are supported.")
+                return 
+            
+            # Update Manager and Keep Original
+            self._original_df = df.copy()
+            self._set_internal_data(df, file_path)
+             
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"Failed to load data:\n{str(e)}")
+
+    def _set_internal_data(self, df, path):
+        try:
+            self.dm.set_data(df, path)
+        except:
+            self.dm.df = df
+        
+        self.update_display(path, df)
+        self.data_loaded.emit(df)
 
     def load_data(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "Open Data File", "", "CSV Files (*.csv);;Excel Files (*.xlsx);;All Files (*)"
         )
         if file_path:
-            try:
-                # Load generic
-                if file_path.endswith('.csv'):
-                    df = pd.read_csv(file_path)
-                elif file_path.endswith('.xlsx'):
-                    df = pd.read_excel(file_path)
-                else:
-                    return 
-                
-                # Update Manager
-                self.dm.set_data(df, file_path) # Assumes set_data takes (df, filename)
+            self._load_file_path(file_path)
+            
+    def on_create_column(self):
+        if self.dm.df is None: return
+        from PySide6.QtWidgets import QInputDialog
+        
+        # Ask for new col name
+        col, ok = QInputDialog.getText(self, "New Column", "Name of new column:")
+        if not ok or not col: return
+        
+        # Ask for expression
+        expr, ok = QInputDialog.getText(self, "Expression", f"Expression for {col} (e.g. A + B, np.log(GDP)):")
+        if not ok or not expr: return
+        
+        try:
+            df = self.dm.df.copy()
+            # Use pandas eval or general eval tailored for safety/convenience
+            # Supporting 'np' is useful
+            import numpy as np
+            df[col] = df.eval(expr, engine='python')
+            
+            self._set_internal_data(df, "Modified Data")
+            QMessageBox.information(self, "Success", f"Column '{col}' created.")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to transform:\n{e}")
 
-                self.update_display(file_path, df)
-                
-                # Emit signal for other panels
-                self.data_loaded.emit(df)
-                
-            except Exception as e:
-                QMessageBox.critical(self, "Load Error", f"Failed to load data:\n{str(e)}")
-                import traceback
-                traceback.print_exc()
+    def on_filter_rows(self):
+        if self.dm.df is None: return
+        from PySide6.QtWidgets import QInputDialog
+        
+        # Ask for query
+        query, ok = QInputDialog.getText(self, "Filter Rows", "Query (e.g. GDP > 1000 and Age < 50):")
+        if not ok or not query: return
+        
+        try:
+            df = self.dm.df.query(query, engine='python')
+            self._set_internal_data(df, "Filtered Data")
+            QMessageBox.information(self, "Success", f"Filtered to {len(df)} rows.")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to filter:\n{e}")
+            
+    def on_reset_data(self):
+        if self._original_df is not None:
+             self._set_internal_data(self._original_df.copy(), "Original Data")
+        else:
+             QMessageBox.warning(self, "Warning", "No original data to reset to.")
 
     def update_display(self, path, df: pd.DataFrame):
         filename = os.path.basename(path)
-        size_mb = os.path.getsize(path) / (1024 * 1024)
+        try:
+            size_mb = os.path.getsize(path) / (1024 * 1024)
+        except:
+            size_mb = 0.0
         
         self.file_label.setText(f"データセット: {filename}")
         self.info_label.setText(f"行: {df.shape[0]} | 列: {df.shape[1]} | サイズ: {size_mb:.2f}MB")

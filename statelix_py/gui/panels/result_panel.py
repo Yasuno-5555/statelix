@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QTextEdit, QHBoxLayout, QFrame
+    QWidget, QVBoxLayout, QLabel, QTextEdit, QHBoxLayout, QFrame,
+    QPushButton
 )
 from PySide6.QtCore import Qt
 
@@ -36,11 +37,33 @@ class ResultPanel(QWidget):
         # 2. Results Content (Split View: Table/Text vs Graph)
         content_layout = QHBoxLayout()
         
+        
         # Text/Table Result
+        text_layout = QVBoxLayout()
+        
+        # Tools
+        tools = QHBoxLayout()
+        tools.addStretch()
+        btn_md = QLabel("<a href='#'>Copy Markdown</a>"); btn_md.setOpenExternalLinks(False)
+        btn_tex = QLabel("<a href='#'>Copy LaTeX</a>"); btn_tex.setOpenExternalLinks(False)
+        
+        # Make them look like buttons or just use buttons
+        self.btn_copy_md = QPushButton("Copy Markdown")
+        self.btn_copy_md.clicked.connect(self.on_copy_markdown)
+        self.btn_copy_tex = QPushButton("Copy LaTeX")
+        self.btn_copy_tex.clicked.connect(self.on_copy_latex)
+        
+        tools.addWidget(self.btn_copy_md)
+        tools.addWidget(self.btn_copy_tex)
+        
+        text_layout.addLayout(tools)
+        
         self.result_text = QTextEdit()
         self.result_text.setReadOnly(True)
         self.result_text.setPlaceholderText("実行結果がここに表示されます...")
-        content_layout.addWidget(self.result_text, stretch=1)
+        text_layout.addWidget(self.result_text)
+        
+        content_layout.addLayout(text_layout, stretch=1)
         
         # Graph Placeholder
         self.graph_placeholder = QLabel("グラフ表示エリア\n(Matplotlib/Plotly)")
@@ -80,3 +103,25 @@ class ResultPanel(QWidget):
         
         log_level = "[INFO]" if success else "[ERROR]"
         self.log_view.append(f"{log_level} Analysis completed. Hash: {result_data.get('hash', '???')}")
+
+    def on_copy_markdown(self):
+        text = self.result_text.toPlainText()
+        if not text: return
+        
+        # Simple wrap
+        md_text = "```\n" + text + "\n```"
+        
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        QApplication.clipboard().setText(md_text)
+        QMessageBox.information(self, "Copied", "Result copied as Markdown code block.")
+
+    def on_copy_latex(self):
+        text = self.result_text.toPlainText()
+        if not text: return
+        
+        # Simple verbatim wrap
+        tex_text = "\\begin{verbatim}\n" + text + "\n\\end{verbatim}"
+        
+        from PySide6.QtWidgets import QApplication, QMessageBox
+        QApplication.clipboard().setText(tex_text)
+        QMessageBox.information(self, "Copied", "Result copied as LaTeX verbatim environment.")

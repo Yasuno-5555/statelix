@@ -66,6 +66,25 @@ class InquiryPanel(QWidget):
         var_group.setLayout(v_layout)
         input_layout.addWidget(var_group)
         
+        # 3. Simulation Settings (Hidden by default)
+        from PySide6.QtWidgets import QDoubleSpinBox
+        self.sim_group = QGroupBox("3. Simulation Settings")
+        s_layout = QFormLayout()
+        
+        self.combo_change_type = QComboBox()
+        self.combo_change_type.addItems(["Increase by %", "Decrease by %", "Set to Value", "Increase by Value"])
+        
+        self.spin_change_val = QDoubleSpinBox()
+        self.spin_change_val.setRange(-1000000, 1000000)
+        self.spin_change_val.setValue(10.0)
+        
+        s_layout.addRow("Change Type:", self.combo_change_type)
+        s_layout.addRow("Amount:", self.spin_change_val)
+        
+        self.sim_group.setLayout(s_layout)
+        self.sim_group.hide() # Initially hidden
+        input_layout.addWidget(self.sim_group)
+        
         # 3. Method hint (Hidden per question)
         self.method_label = QLabel("Method: Auto-Detect")
         self.method_label.setStyleSheet("color: gray; font-style: italic;")
@@ -144,12 +163,15 @@ class InquiryPanel(QWidget):
         if mid == 1: # Drivers
             self.method_label.setText("Method: OLS/Lasso (Association)")
             self.combo_z.setEnabled(False)
+            self.sim_group.hide()
         elif mid == 2: # Causal
             self.method_label.setText("Method: IV / DiD / RDD (Inference)")
             self.combo_z.setEnabled(True)
+            self.sim_group.hide()
         elif mid == 3: # WhatIf
             self.method_label.setText("Method: Counterfactual Simulation")
             self.combo_z.setEnabled(True)
+            self.sim_group.show()
 
     def on_ask(self):
         # Prepare Inquiry Request
@@ -163,6 +185,11 @@ class InquiryPanel(QWidget):
             "x": self.combo_x.currentText(),
             "z": self.combo_z.currentText()
         }
+        
+        if mid == 3:
+            params["sim_type"] = self.combo_change_type.currentText()
+            params["sim_val"] = self.spin_change_val.value()
+            
         self.run_inquiry.emit(params)
 
     def set_narrative(self, text):
