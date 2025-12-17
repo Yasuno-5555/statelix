@@ -12,12 +12,13 @@ from typing import Optional, List, Union, Dict, Tuple
 from dataclasses import dataclass
 
 try:
-    import statelix_core
-    _cpp_causal = statelix_core.causal
+    import statelix.causal as _cpp_causal
     _HAS_CPP_CORE = True
 except ImportError:
+    # Fallback to older monolithic structure if strictly necessary, 
+    # but primarily we want the submodule
     try:
-        from ..core import statelix_core
+        import statelix_core
         _cpp_causal = statelix_core.causal
         _HAS_CPP_CORE = True
     except ImportError:

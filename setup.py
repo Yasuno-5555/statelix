@@ -63,6 +63,22 @@ ext_modules = [
        extra_compile_args=cxx_args,
        language='c++'
     ),
+    # 6. Spatial Econometrics
+    Extension(
+        'statelix.spatial',
+        sources=['src/bindings/python_bindings_spatial.cpp'],
+        include_dirs=[src_dir, vendor_dir, pybind_dir],
+        extra_compile_args=cxx_args,
+        language='c++'
+    ),
+    # 7. Graph Analysis
+    Extension(
+        'statelix.graph',
+        sources=['src/bindings/python_bindings_graph.cpp'],
+        include_dirs=[src_dir, vendor_dir, pybind_dir],
+        extra_compile_args=cxx_args,
+        language='c++'
+    ),
 ]
 
 setup(

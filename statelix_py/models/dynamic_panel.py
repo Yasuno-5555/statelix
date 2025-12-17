@@ -5,11 +5,15 @@ from dataclasses import dataclass
 from typing import Optional, List, Union
 
 try:
-    from statelix_py.core import statelix_core
+    import statelix.panel as _cpp_panel
     _HAS_CPP = True
 except ImportError:
-    import statelix_core # fallback or error
-    _HAS_CPP = True
+    try:
+        import statelix_core
+        _cpp_panel = statelix_core.panel
+        _HAS_CPP = True
+    except (ImportError, AttributeError):
+        _HAS_CPP = False
 
 @dataclass
 class DynamicPanelResult:
@@ -75,7 +79,7 @@ class ArellanoBond:
         # If 'times' are just indices 0..T-1, it works.
         
         # Instantiate C++ class
-        gmm = statelix_core.panel.DynamicPanelGMM()
+        gmm = _cpp_panel.DynamicPanelGMM()
         gmm.two_step = self.two_step
         
         # Estimate

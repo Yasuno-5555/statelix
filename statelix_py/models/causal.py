@@ -24,20 +24,18 @@ _HAS_CPP_CORE = False
 _cpp_causal = None
 
 try:
-    import statelix_core
-    _cpp_causal = statelix_core.causal
+    import statelix.causal as _cpp_causal
     _HAS_CPP_CORE = True
 except (ImportError, AttributeError):
     try:
-        from ..core import statelix_core
-        # Verify causal submodule exists
+        import statelix_core
         if hasattr(statelix_core, 'causal'):
             _cpp_causal = statelix_core.causal
             _HAS_CPP_CORE = True
         else:
             _HAS_CPP_CORE = False
-    except (ImportError, AttributeError):
-        pass
+    except ImportError:
+        _HAS_CPP_CORE = False
 
 
 # =============================================================================

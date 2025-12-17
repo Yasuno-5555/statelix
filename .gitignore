@@ -23,6 +23,7 @@ tools/pip_install_log.txt
 # Environment
 .env
 .venv
+.venv_bench/
 venv/
 .idea/
 .vscode/

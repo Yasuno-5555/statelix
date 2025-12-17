@@ -35,6 +35,30 @@ Solid implementations of classical methods.
 -   **OLS/GLM**: Robust linear models.
 -   **Bayesian Regression**: Probabilistic reasoning made accessible.
 
+
+---
+
+## ✅ Performance & Verification
+
+Statelix is rigorously tested to ensure the correctness of its native C++ core and Python bindings.
+
+### Full Stack Verification (v2.3)
+The following modules have been verified for accuracy and performance using the built-in benchmark suite:
+
+| Component | Status | Verified Functionality |
+|-----------|--------|------------------------|
+| **Causal** | ✅ PASS | PSM (Propensity Score Matching), Diff-in-Diff |
+| **Spatial** | ✅ PASS | Spatial Autoregressive (SAR) & Error (SEM) Models |
+| **Panel** | ✅ PASS | Dynamic Panel (GMM/Arellano-Bond), Fixed/Random Effects |
+| **Time Series** | ✅ PASS | GARCH, ARIMA, State Space Models |
+| **Bayes** | ✅ PASS | HMC Sampler, Variational Inference |
+| **Inquiry** | ✅ PASS | Narrative Generation, Counterfactual Simulations |
+
+To run the benchmarks yourself:
+```bash
+python run_benchmarks.py
+```
+
 ---
 
 ## 🚀 Quick Start: The "Why" Workflow

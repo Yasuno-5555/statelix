@@ -13,15 +13,14 @@ from dataclasses import dataclass
 from enum import Enum
 
 try:
-    import statelix_core
-    _cpp_spatial = statelix_core.spatial
+    import statelix.spatial as _cpp_spatial
     _HAS_CPP_CORE = True
 except ImportError:
     try:
-        from ..core import statelix_core
+        import statelix_core
         _cpp_spatial = statelix_core.spatial
         _HAS_CPP_CORE = True
-    except ImportError:
+    except (ImportError, AttributeError):
         _HAS_CPP_CORE = False
 
 class SpatialModelType(Enum):
