@@ -55,13 +55,14 @@ ext_modules = [
         language='c++'
     ),
     # 5. Linear Models (OLS/GLM) - Disabled due to build issues
-    # Extension(
-    #    'statelix.linear_model',
-    #    sources=['src/bindings/python_bindings_linear.cpp', 'src/linear_model/ols.cpp'],
-    #    include_dirs=[src_dir, vendor_dir, pybind_dir],
-    #    extra_compile_args=cxx_args,
-    #    language='c++'
-    # ),
+    # 5. Linear Models (OLS/GLM) - Restored for Phase 9
+    Extension(
+       'statelix.linear_model',
+       sources=['src/bindings/python_bindings_linear.cpp', 'src/linear_model/ols.cpp'],
+       include_dirs=[src_dir, vendor_dir, pybind_dir],
+       extra_compile_args=cxx_args,
+       language='c++'
+    ),
 ]
 
 setup(

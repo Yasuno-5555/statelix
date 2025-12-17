@@ -35,45 +35,106 @@ class BaseAdapter(ABC):
         return np.tile(preds[:, None], (1, n_draws))
 
 class LinearAdapter(BaseAdapter):
-    """Adapter for OLS and Linear Models"""
-    def get_metrics(self):
-        # Assuming statelix.linear_model.OLSResult has these properties or we compute them
-        # Actually OLSResult usually has AIC/BIC.
-        # If model is the *Fitted Model Object* or *Result Object*?
-        # User sets `fit()` then passes model.
-        # Statelix OLS: model.fit() returns Result.
-        # So we likely wrap the Result object or Model that holds result.
-        # Let's assume we wrap the Result object for now, or Model that has result.
-        # Statelix API: OLS.fit() returns OLSResult.
-        # So we adapt the RESULT.
-        res = self.model
+    """Adapter for OLS and Linear Models with C++/Python Fallback."""
+    
+    def __init__(self, model):
+        self.model = model
+        self.use_fallback = False
         
-        # Check if attributes exist, else compute roughly
+        # Determine if we are wrapping a C++ result or a Mock result
+        # C++ Result usually has explicit C++ type
+        # Mock usually Python dict or object
+        pass
+
+    def get_metrics(self):
+        # 1. Try Standard Attributes (C++ or Statsmodels)
+        res = self.model
         metrics = {}
-        if hasattr(res, 'aic'): metrics['aic'] = res.aic
-        if hasattr(res, 'bic'): metrics['bic'] = res.bic
-        if hasattr(res, 'rsquared'): metrics['r2'] = res.rsquared
-        if hasattr(res, 'log_likelihood'): metrics['log_likelihood'] = res.log_likelihood
+        
+        try:
+             # C++ Binding often exposes properties directly
+             if hasattr(res, 'aic'): metrics['aic'] = res.aic
+             if hasattr(res, 'bic'): metrics['bic'] = res.bic
+             if hasattr(res, 'r_squared'): metrics['r2'] = res.r_squared
+             if hasattr(res, 'rsquared'): metrics['r2'] = res.rsquared # Statsmodels/Mock compatibility
+             if hasattr(res, 'log_likelihood'): metrics['log_likelihood'] = res.log_likelihood
+        except:
+             pass
+             
+        # 2. Heuristic Calculation if missing (for Mock)
+        if 'r2' not in metrics and hasattr(res, 'coef_'):
+             # We can't easily compute R2 without data.
+             pass
+             
         return metrics
 
     def predict(self, X_new):
-        # Statelix OLSResult usually has .predict(X)
         if hasattr(self.model, 'predict'):
-            return self.model.predict(X_new)
+            try:
+                return self.model.predict(X_new)
+            except:
+                pass
+        
         # Fallback: X @ coef
         if hasattr(self.model, 'coef_'):
             coef = getattr(self.model, 'coef_')
-            # Handle intercept? Usually X_new must match training X logic.
-            # Assuming X_new matches.
-            return X_new @ coef
+            intercept = getattr(self.model, 'intercept_', 0.0)
+            return X_new @ coef + intercept
+            
         return np.zeros(X_new.shape[0])
 
     def get_coefficients(self):
         if hasattr(self.model, 'coef_'):
             coefs = getattr(self.model, 'coef_')
-            # Return as dict with indices
             return {i: c for i, c in enumerate(coefs)}
         return {}
+
+# --- HELPER: Safe Import & Factory ---
+class StatelixLinearFactory:
+    """Safely returns C++ OLS or Python Mock OLS."""
+    @staticmethod
+    def get_ols():
+        try:
+            from statelix.linear_model import FitOLS
+            return FitOLS
+        except ImportError:
+            return MockOLS
+
+class MockOLS:
+    """Pure Python fallback for OLS."""
+    def __init__(self):
+        self.coef_ = None
+        self.intercept_ = 0.0
+        self.r_squared = 0.0
+        self.aic = 0.0
+        self.bic = 0.0
+        
+    def fit(self, X, y):
+        # Simple Numpy OLS
+        X_aug = np.column_stack([np.ones(X.shape[0]), X])
+        try:
+            beta = np.linalg.lstsq(X_aug, y, rcond=None)[0]
+            self.intercept_ = beta[0]
+            self.coef_ = beta[1:]
+            
+            # Simple Stats
+            y_pred = X_aug @ beta
+            resid = y - y_pred
+            sse = np.sum(resid**2)
+            sst = np.sum((y - np.mean(y))**2)
+            self.r_squared = 1 - sse/sst if sst > 1e-9 else 0.0
+            
+            # Mock AIC
+            n = len(y)
+            k = len(beta)
+            self.aic = n * np.log(sse/n) + 2*k
+        except:
+            self.intercept_ = 0.0
+            self.coef_ = np.zeros(X.shape[1])
+        return self
+    
+    def predict(self, X):
+        return X @ self.coef_ + self.intercept_
 
 class BayesAdapter(BaseAdapter):
     """Adapter for BayesianLinearRegression"""

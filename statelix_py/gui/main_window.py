@@ -3,15 +3,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QThread, Signal, Slot
 
-from statelix_py.gui.panels.exploratory_panel import ExploratoryPanel
-from statelix_py.gui.panels.data_panel import DataPanel
-from statelix_py.gui.panels.model_panel import ModelPanel
-from statelix_py.gui.panels.result_panel import ResultPanel
-from statelix_py.gui.panels.plot_panel import PlotPanel
-
-import time
-import pandas as pd
-import numpy as np
+from statelix_py.gui.panels.inquiry_panel import InquiryPanel
 
 # --- Worker Thread for Analysis ---
 class AnalysisWorker(QThread):
@@ -25,22 +17,125 @@ class AnalysisWorker(QThread):
 
     def run(self):
         try:
-            # Use High-Level SDK Models
             from statelix_py.models import (
                 StatelixGraph, StatelixIV, StatelixDID, StatelixPSM,
                 BayesianLogisticRegression, StatelixHNSW
             )
-            # Legacy fallback for old models
+            from statelix.inquiry import Storyteller, WhatIf, CausalAdapter
+            from statelix.causal import IV2SLS, DiffInDiff
             from statelix_py.core import cpp_binding 
             
             result_data = {}
             summary = ""
             start_time = time.time()
             
-            model = self.params['model']
+            model = self.params.get('model', '')
+            mode = self.params.get('mode', 'Classic')
             
-            # --- Graph Analysis (Refactored) ---
-            if "Graph" in model:
+            # === INQUIRY MODE ===
+            if mode == 'Inquiry':
+                q_id = self.params['question_id']
+                y_col = self.params['y']
+                x_col = self.params['x']
+                z_col = self.params.get('z', '')
+                
+                Y = self.df[y_col].values
+                X = self.df[x_col].values
+                
+                # 1. Drivers (Association)
+                if q_id == 1:
+                    # Simple OLS for now
+                    # We use cpp_binding.fit_ols_full(X, y)
+                    # But Storyteller expects an object.
+                    # Use a mock or Python wrapper? 
+                    # Let's use pure python Causal model as a placeholder or proper OLS if available.
+                    # Ideally: `statelix.linear_model.OLS` but C++ is disabled.
+                    # Use Mock/Simple Python OLS for Inquiry?
+                    # Or reuse IV2SLS with no instrument? no.
+                    # Let's use CausalAdapter with a mock for now or implement PythonOLS.
+                    # Or simpler: Just do Correlation analysis?
+                    # "What drives Y?" -> usually Lasso or OLS.
+                    
+                    # Implementation: Use Numpy OLS
+                    import statsmodels.api as sm
+                    X_aug = sm.add_constant(X)
+                    ols = sm.OLS(Y, X_aug).fit()
+                    
+                    # Adapt to Statelix Storyteller
+                    # We need an adapter for statsmodels or map it manually.
+                    # Storyteller supports: .coef_, .aic, etc.
+                    # statsmodels result has params, aic.
+                    
+                    # Wrapper class to look like Statelix model
+                    class SMWrapper:
+                        def __init__(self, res):
+                            self.coef_ = res.params
+                            self.aic = res.aic
+                            self.r2 = res.rsquared
+                            
+                    story = Storyteller(SMWrapper(ols), feature_names=["Intercept", x_col])
+                    narrative = story.explain()
+                    
+                # 2. Causal Inference
+                elif q_id == 2:
+                    # Detect Method
+                    result_data['viz_type'] = 'None'
+                    
+                    if z_col and "Instrument" in z_col: # Heuristic? No, user selected it.
+                        # IV
+                        Z = self.df[z_col].values
+                        model = IV2SLS().fit(Y, Endog=X, Instruments=Z)
+                        result_data['viz_type'] = 'IV'
+                        result_data['viz_data'] = {'Z': Z, 'X': X, 'resid': Y - model.predict(X)} 
+                        
+                    elif "Treatment" in x_col or len(np.unique(X)) == 2:
+                        # Binary Treatment -> DiD or Matching?
+                        # If Z is time...
+                        if z_col: # Assume Z is Time or Group
+                             # Let's assume DiD structure: Y, Group(X), Time(Z)
+                             Time = self.df[z_col].values
+                             model = DiffInDiff().fit(Y, Group=X, Time=Time)
+                             result_data['viz_type'] = 'DiD'
+                             result_data['viz_data'] = {'Y': Y, 'Group': X, 'Time': Time}
+                        else:
+                             # Just RDD if X is continuous? Or simple difference?
+                             pass
+                    
+                    # RDD Check: X is continuous relative to a Cutoff?
+                    # Heuristic: If X has many unique values and "Cutoff" or "Run" is implied?
+                    # Or just try RDD if X matches 'RunVar' pattern
+                    if 'model' not in locals():
+                        from statelix.causal import RDD
+                        # Assume Cutoff 0 or mean? Let's guess 0 for now or user specifies.
+                        # For Inquiry Mode, we might need a dedicated input for Cutoff.
+                        # For now, default 0.0
+                        cutoff = 0.0
+                        try:
+                            model = RDD(cutoff=cutoff).fit(Y, RunVar=X)
+                            result_data['viz_type'] = 'RDD'
+                            result_data['viz_data'] = {'Y': Y, 'RunVar': X, 'Cutoff': cutoff}
+                        except:
+                            pass
+
+                    if 'model' in locals():
+                        story = Storyteller(model, feature_names=["Effect/Slope", "X", "Z", "Intercept"])
+                        narrative = story.explain()
+                    else:
+                        narrative = "Could not automatically determine causal strategy. Please ensure inputs are correct."
+
+                # 3. WhatIf
+                elif q_id == 3:
+                     # Counterfactual
+                     # Needs a fitted model.
+                     # Fit OLS/IV then simulate.
+                     pass
+                     narrative = "What-If Simulation Engine ... (Coming Soon)"
+
+                result_data["type"] = "inquiry"
+                result_data["narrative"] = narrative
+            
+            # === CLASSIC MODE ===
+            elif "Graph" in model:
                 src_col = self.params.get('target') # L1
                 dst_col = self.params.get('features')[0] if self.params.get('features') else None # L2
                 
@@ -184,10 +279,11 @@ class AnalysisWorker(QThread):
                  else:
                     summary += "Legacy model selected.\n"
 
-            elapsed = time.time() - start_time
-            summary += f"\nTime: {elapsed:.3f}s"
-            
-            result_data["summary"] = summary
+            if mode != 'Inquiry':
+                elapsed = time.time() - start_time
+                summary += f"\nTime: {elapsed:.3f}s"
+                result_data["summary"] = summary
+                
             self.finished.emit(result_data)
 
         except Exception as e:
@@ -198,16 +294,45 @@ class AnalysisWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Statelix v2.2")
+        self.setWindowTitle("Statelix v2.3 - Explanatory Intelligence")
         self.resize(1200, 800)
         self.worker = None # Keep reference
         
         self.init_ui()
 
-    def init_ui(self):
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
+        # Top Level Tabs for Modes
+        self.mode_tabs = QTabWidget()
+        self.setCentralWidget(self.mode_tabs)
+        
+        # --- Plugins (Load First) ---
+        from statelix_py.plugins.loader import WasmPluginLoader
+        self.plugin_loader = WasmPluginLoader()
+        self.loaded_plugins = self.plugin_loader.scan_and_load()
+        
+        # --- Menu Bar ---
+        menu = self.menuBar()
+        file_menu = menu.addMenu("File")
+        plugin_menu = menu.addMenu("Plugins")
+        
+        if not self.loaded_plugins:
+             plugin_menu.addAction("No plugins found").setEnabled(False)
+        else:
+             for name, info in self.loaded_plugins.items():
+                 # sub = plugin_menu.addMenu(name)
+                 # For now just list them
+                 plugin_menu.addAction(f"Loaded: {name}").setEnabled(False)
+        
+        plugin_menu.addSeparator()
+        reload_action = plugin_menu.addAction("Reload Plugins")
+        reload_action.triggered.connect(self.reload_plugins)
+        
+        # --- Mode 1: Inquiry (New Student GUI) ---
+        self.inquiry_panel = InquiryPanel()
+        self.mode_tabs.addTab(self.inquiry_panel, "🎓 Inquiry Mode")
+        
+        # --- Mode 2: Standard (Expert GUI) ---
+        classic_widget = QWidget()
+        classic_layout = QVBoxLayout(classic_widget)
         
         splitter = QSplitter(Qt.Orientation.Vertical)
         
@@ -219,32 +344,37 @@ class MainWindow(QMainWindow):
         self.plot_panel = PlotPanel()
         self.exploratory_panel = ExploratoryPanel()
         
-        self.output_tabs.addTab(self.result_panel, "テキスト結果")
-        self.output_tabs.addTab(self.plot_panel, "プロット (Viz)")
-        self.output_tabs.addTab(self.exploratory_panel, "探索的分析 (EDA)")
+        self.output_tabs.addTab(self.result_panel, "Result")
+        self.output_tabs.addTab(self.plot_panel, "Plots")
+        self.output_tabs.addTab(self.exploratory_panel, "EDA")
         
-        # Connect
+        # Connect Classic
         self.model_panel.run_requested.connect(self.run_analysis)
         self.data_panel.data_loaded.connect(self.model_panel.update_columns)
         self.data_panel.data_loaded.connect(self.exploratory_panel.on_data_loaded)
         
+        # Connect Inquiry (Also needs data updates)
+        self.data_panel.data_loaded.connect(self.inquiry_panel.update_columns)
+        self.inquiry_panel.run_inquiry.connect(self.run_analysis)
+
         splitter.addWidget(self.data_panel)
         splitter.addWidget(self.model_panel)
         splitter.addWidget(self.output_tabs)
         splitter.setSizes([200, 250, 350])
         
-        main_layout.addWidget(splitter)
+        classic_layout.addWidget(splitter)
+        self.mode_tabs.addTab(classic_widget, "🛠️ Expert Mode")
+        
         self.statusBar().showMessage("Ready")
 
     def run_analysis(self, params):
         from statelix_py.core.data_manager import DataManager
         dm = DataManager.instance()
         if dm.df is None or dm.df.empty:
-            QMessageBox.warning(self, "Warning", "No data loaded.")
+            QMessageBox.warning(self, "Warning", "No data loaded. Use DataPanel in Expert Mode to load data first.")
             return
 
-        self.statusBar().showMessage(f"Running {params['model']}...")
-        self.model_panel.run_btn.setEnabled(False) # Disable button
+        self.statusBar().showMessage(f"Running Analysis...")
         
         # Start Worker
         self.worker = AnalysisWorker(params, dm.df)
@@ -254,20 +384,98 @@ class MainWindow(QMainWindow):
 
     @Slot(dict)
     def on_analysis_finished(self, result):
-        self.model_panel.run_btn.setEnabled(True)
         self.statusBar().showMessage("Analysis Completed.")
         
-        self.result_panel.display_result(result)
-        
-        # Handle Viz
-        if "trace" in result:
-            self.plot_panel.plot_hmc_trace(result['trace'])
-            self.output_tabs.setCurrentWidget(self.plot_panel)
+        if result.get("type") == "inquiry":
+             # Inquiry Output
+             self.inquiry_panel.set_narrative(result.get("narrative", ""))
+             
+             # Viz
+             viz_type = result.get('viz_type')
+             viz_data = result.get('viz_data')
+             
+             if viz_type == 'IV':
+                 def plot_iv(ax):
+                     # Scatter First Stage
+                     ax.scatter(viz_data['Z'], viz_data['X'], alpha=0.5)
+                     ax.set_xlabel("Instrument (Z)")
+                     ax.set_ylabel("Endogenous (X)")
+                     ax.set_title("First Stage Strength")
+                 self.inquiry_panel.plot_assumption(plot_iv)
+                 
+             elif viz_type == 'DiD':
+                 def plot_did(ax):
+                     # Viz Data: Y, Group, Time
+                     Y = viz_data['Y']
+                     G = viz_data['Group']
+                     T = viz_data['Time']
+                     
+                     df_viz = pd.DataFrame({'Y': Y, 'Group': G, 'Time': T})
+                     means = df_viz.groupby(['Group', 'Time'])['Y'].mean().unstack()
+                     
+                     # Plot Control
+                     if 0 in means.index:
+                         ax.plot(means.columns, means.loc[0], 'o--', label='Control', color='gray')
+                     # Plot Treated
+                     if 1 in means.index:
+                         ax.plot(means.columns, means.loc[1], 'o-', label='Treated', color='red')
+                         
+                     ax.set_xticks(means.columns)
+                     ax.set_xlabel("Time Period")
+                     ax.set_ylabel("Average Outcome (Y)")
+                     ax.set_title("Parallel Trends Check")
+                     ax.legend()
+                     ax.grid(True, linestyle=':')
+                     
+                 self.inquiry_panel.plot_assumption(plot_did)
+
+             elif viz_type == 'RDD':
+                 def plot_rdd(ax):
+                     X = viz_data['RunVar']
+                     Y = viz_data['Y']
+                     c = viz_data['Cutoff']
+                     
+                     # Scatter
+                     ax.scatter(X, Y, alpha=0.3, s=10, color='gray')
+                     ax.axvline(c, color='black', linestyle='--', label=f'Cutoff ({c})')
+                     
+                     # Trend Lines (Left/Right)
+                     mask_left = X < c
+                     mask_right = X >= c
+                     
+                     if np.sum(mask_left) > 1:
+                         z = np.polyfit(X[mask_left], Y[mask_left], 1)
+                         p = np.poly1d(z)
+                         range_l = np.linspace(X.min(), c, 100)
+                         ax.plot(range_l, p(range_l), 'b-', linewidth=2, label='Left Trend')
+                         
+                     if np.sum(mask_right) > 1:
+                         z = np.polyfit(X[mask_right], Y[mask_right], 1)
+                         p = np.poly1d(z)
+                         range_r = np.linspace(c, X.max(), 100)
+                         ax.plot(range_r, p(range_r), 'r-', linewidth=2, label='Right Trend')
+                         
+                     ax.set_xlabel("Running Variable")
+                     ax.set_ylabel("Outcome")
+                     ax.set_title("Regression Discontinuity Check")
+                     ax.legend()
+                     
+                 self.inquiry_panel.plot_assumption(plot_rdd)
+
         else:
-            self.output_tabs.setCurrentWidget(self.result_panel)
+            # Classic Output
+            self.result_panel.display_result(result)
+            if "trace" in result:
+                self.plot_panel.plot_hmc_trace(result['trace'])
+                self.output_tabs.setCurrentWidget(self.plot_panel)
+            else:
+                self.output_tabs.setCurrentWidget(self.result_panel)
 
     @Slot(str)
     def on_analysis_error(self, msg):
-        self.model_panel.run_btn.setEnabled(True)
         self.statusBar().showMessage("Error")
         QMessageBox.critical(self, "Analysis Failed", msg)
+
+    def reload_plugins(self):
+        self.loaded_plugins = self.plugin_loader.scan_and_load()
+        QMessageBox.information(self, "Plugins", f"Reloaded. Found {len(self.loaded_plugins)} plugins.")
