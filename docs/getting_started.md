@@ -80,3 +80,19 @@ Unlike standard Logistic Regression which gives a point estimate (MLE), this giv
 - **Samples**: Number of samples to keep for inference.
 
 Use the "Plot (Viz)" tab to check the **Trace Plot**. If the lines look like a "fuzzy caterpillar", the chain has mixed well. If it wanders slowly, increase samples or thin the chain.
+
+### 5. Structural Equation Modeling (Mediation)
+Go beyond "Does X affect Y?" to "How does X affect Y?".
+Mediation analysis decomposes the Total Effect into Direct and Indirect (via Mediator) effects.
+
+**Model Structure:**
+1. $M \sim X$
+2. $Y \sim X + M$
+
+**Insight:**
+If the Indirect Effect is significant, it implies $X$ works *through* $M$.
+
+**Example:**
+- Does **Education (X)** increase **Income (Y)**?
+- Or does Education increase **Skills (M)**, which then increase Income?
+- Statelix will tell you "50% of the effect is mediated by Skills".
