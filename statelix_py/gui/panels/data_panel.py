@@ -99,10 +99,29 @@ class DataPanel(QWidget):
                 self._load_file_path(file_path)
 
     def _load_file_path(self, file_path):
+        if not os.path.exists(file_path):
+            QMessageBox.critical(self, "File Not Found", f"The file does not exist:\n{file_path}")
+            return
+
         try:
             # Load generic
             if file_path.endswith('.csv'):
-                df = pd.read_csv(file_path)
+                # Try multiple encodings for Japanese environment
+                encodings = ['utf-8', 'cp932', 'shift_jis', 'latin1']
+                df = None
+                last_error = None
+                
+                for enc in encodings:
+                    try:
+                        df = pd.read_csv(file_path, encoding=enc)
+                        break
+                    except (UnicodeDecodeError, ValueError) as e:
+                        last_error = e
+                        continue
+                
+                if df is None:
+                    raise last_error or Exception("Unknown error during CSV loading")
+                    
             elif file_path.endswith('.xlsx'):
                 df = pd.read_excel(file_path)
             else:
@@ -114,7 +133,11 @@ class DataPanel(QWidget):
             self._set_internal_data(df, file_path)
              
         except Exception as e:
-            QMessageBox.critical(self, "Load Error", f"Failed to load data:\n{str(e)}")
+            import traceback
+            error_details = traceback.format_exc()
+            QMessageBox.critical(self, "Load Error", 
+                                 f"Failed to load data:\n{str(e)}\n\n"
+                                 f"Details:\n{error_details[:500]}...")
 
     def _set_internal_data(self, df, path):
         try:
