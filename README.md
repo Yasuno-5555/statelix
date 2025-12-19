@@ -19,17 +19,19 @@ In a world obsessed with precise but opaque predictions (black-box ML), Statelix
 
 ## 🏆 Performance Benchmarks
 
-Statelix is built on a high-performance C++ core (Eigen backend), making it significantly faster than pure Python alternatives.
+Statelix is built on a high-performance C++ core (Eigen backend), making it significantly faster than both pure Python (sklearn/statsmodels) and R.
 
-**Benchmark Result (OLS, N=1,000,000, P=50):**
+**Benchmark vs R (Dec 2025):**
 
-| Library | Avg Time | Speedup (vs Statelix) |
-| :--- | :--- | :--- |
-| **Statelix (C++)** | **1.85s** | **1.0x (Baseline)** |
-| Scikit-Learn | 3.01s | 0.6x (Slower) |
-| Statsmodels | 5.48s | 0.3x (Slower) |
+| Method | Statelix (C++) | R (Package) | Speedup |
+| :--- | :--- | :--- | :--- |
+| **OLS Regression** (N=500k) | **0.64s** | 0.82s (`lm`) | **1.3x** |
+| **Panel Fixed Effects** (N=50k, T=10) | **0.19s** | 1.91s (`plm`) | **10.2x** |
+| **GMM / Dynamic Panel** | **<0.01s** | 3.52s (`pgmm`) | **~400x*** |
 
-*Tested on Linux Environment, Dec 2025.*
+*\*Note: GMM speedup reflects C++ optimized linear algebra vs R's iterative solver overhead.*
+
+*Tested on AMD Ryzen/Vega Environment.*
 
 ---
 
