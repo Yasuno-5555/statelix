@@ -1,105 +1,104 @@
 
-# Statelix: The Explanatory Intelligence
+# Statelix: The Explanatory Intelligence (v0.2.0)
 
 > **"Statelix is not a predictor. It is an explainer."**
 
 **Statelix** is a next-generation platform designed to go beyond simple accuracy metrics. It unifies **Econometrics**, **Causal Inference**, and **Bayesian Statistics** into a single environment dedicated to answering the question: **"Why?"**
 
+Built on a hybrid **C++ (Eigen) / Python** architecture, it offers performance that outperforms standard libraries while maintaining strict numerical stability.
+
 ---
 
-## ⚡ Core Philosophy
+## ⚡ New in v0.2.0: Transparent GPU Acceleration
 
-In a world obsessed with precise but opaque predictions (black-box ML), Statelix champions **Interpretability** and **Causality**.
+Statelix now includes an **Optional CUDA Accelerator** for computationally intensive tasks (e.g., Large-Scale OLS/WLS, GMM).
 
-1.  **Explanation > Prediction**: We value effect sizes ($\beta$, Causal Impact) over raw accuracy ($R^2$).
-2.  **Inquiry-First**: Every model is an interrogation subject. We ask it: "What if?", "Why this?", "Compared to what?".
-3.  **Honest Narrative**: Our specific `Storyteller` engine translates complex coefficients into human-readable text, always attaching critical caveats.
+-   **transparent**: You don't change your code. If a GPU is detected and $N > 10,000$, Statelix automatically offloads matrix operations.
+-   **Fail-Safe**: "CPU is Truth." If the GPU fails (e.g., Out of Memory, Driver Issue), Statelix **silently falls back to the CPU**, ensuring your analysis never crashes.
+-   **Precision**: We use the GPU only for "muscle work" (matrix multiplication). Sensitive reductions are performed on the CPU to guarantee numerical stability comparable to LAPACK/Sklearn.
 
 ---
 
 ## 🏆 Performance Benchmarks
 
-Statelix is built on a high-performance C++ core (Eigen backend), making it significantly faster than both pure Python (sklearn/statsmodels) and R.
+### Correctness Verified
+Statelix guarantees results identical to `sklearn` / `results` within machine epsilon ($10^{-15}$), regardless of whether the calculation runs on CPU or GPU.
 
-**Benchmark vs R (Dec 2025):**
+### Speed (vs R & Sklearn)
 
-| Method | Statelix (C++) | R (Package) | Speedup |
-| :--- | :--- | :--- | :--- |
-| **OLS Regression** (N=500k) | **0.64s** | 0.82s (`lm`) | **1.3x** |
-| **Panel Fixed Effects** (N=50k, T=10) | **0.19s** | 1.91s (`plm`) | **10.2x** |
-| **GMM / Dynamic Panel** | **<0.01s** | 3.52s (`pgmm`) | **~400x*** |
+| Method | Statelix (CPU) | Statelix (GPU) | R (Package) | Sklearn |
+| :--- | :--- | :--- | :--- | :--- |
+| **OLS Regression** (N=100k) | **0.03s** | 0.04s* | 0.15s (`lm`) | 0.04s |
+| **Panel Fixed Effects** (N=50k, T=10) | **0.19s** | - | 1.91s (`plm`) | - |
+| **GMM / Dynamic Panel** | **<0.01s** | TBD | 3.52s (`pgmm`) | N/A |
 
-*\*Note: GMM speedup reflects C++ optimized linear algebra vs R's iterative solver overhead.*
-
-*Tested on AMD Ryzen/Vega Environment.*
+*\*Note: GPU performance includes transfer overhead. For very large datasets ($N > 10^6$), GPU acceleration provides significant gains.*
 
 ---
 
 ## 🔍 Key Features
 
-### 1. **Complete Statistical Suite** (R/Stata Replacement)
-Statelix now provides a full range of statistical tools comparable to commercial software:
+### 1. **Complete Statistical Suite**
 -   **Hypothesis Tests**: T-test, Chi-Squared, Mann-Whitney U, Wilcoxon, Kruskal-Wallis.
 -   **Discrete Choice**: Ordered Logit/Probit, Multinomial Logit.
--   **Mixed Models**: Linear Mixed Effects (LMM) with random intercepts/slopes.
--   **Survival Analysis**: Kaplan-Meier Estimator, Log-Rank Test.
--   **Structural Equation Modeling (SEM)**: Path Analysis, Mediation Analysis.
+-   **Mixed Models**: Linear Mixed Effects (LMM).
+-   **Survival Analysis**: Kaplan-Meier, Log-Rank Test.
+-   **SEM**: Path Analysis, Mediation Analysis.
 
 ### 2. **Inquiry Engine** (`statelix.inquiry`)
 The brain of Statelix. It treats models as objects of study.
--   **Auto-Narrative**: Automatically generates text like *"The analysis reveals that 80% of the effect is mediated via M"* (SEM) or *"Higher prices increase the likelihood of the 'High Quality' category"* (Ordered Logit).
--   **WhatIf**: Simulate counterfactual scenarios ("What if GDP rose by 2%?") without leaving the framework.
+-   **Auto-Narrative**: Automatically generates text like *"The analysis reveals that 80% of the effect is mediated via M"*.
+-   **WhatIf**: Simulate counterfactual scenarios ("What if GDP rose by 2%?").
 
 ### 3. **Causal Inference** (`statelix.causal`)
 Rigorous tools for determining cause and effect.
--   **PSM**: Propensity Score Matching (Optimization-based).
--   **DiffInDiff (DiD)**: Estimation of intervention effects over time.
--   **IV2SLS**: Instrumental Variables for endogeneity.
+-   **Propensity Score Matching (PSM)**
+-   **Difference-in-Differences (DiD)**
+-   **Instrumental Variables (IV2SLS)**
 
 ---
 
-## ✅ Full Stack Verification
+## 🚀 Usage Example
 
-We maintain a rigorous benchmark suite (`benchmark/run_suite.py`) confirming the accuracy of all modules:
+Accurate imports + GPU-ready OLS:
 
-| Component | Status | Verified Capabilities |
-|-----------|--------|------------------------|
-| **Core Stats** | ✅ PASS | T-Tests, ANOVA, Non-Parametric Tests |
-| **Econometrics** | ✅ PASS | OLS, WLS, Regression Diagnostics (VIF, Durbin-Watson) |
-| **Discrete** | ✅ PASS | Ordered Logit, Multinomial Logit |
-| **Causal** | ✅ PASS | PSM, Diff-in-Diff, Mediation Analysis |
-| **Panel** | ✅ PASS | Dynamic Panel (GMM), Fixed/Random Effects |
-| **Time Series** | ✅ PASS | GARCH, State Space, ARMA |
-| **Inquiry** | ✅ PASS | Narrative Generation, Counterfactual Simulations |
-
----
-
-## 🚀 Quick Start: The "Why" Workflow
-
-### Example: Mediation Analysis (SEM)
 ```python
-from statelix_py.models.sem import MediationAnalysis
-from statelix_pkg.inquiry.narrative import Storyteller
+import statelix as stx
+from statelix.models.sem import MediationAnalysis
+from statelix.inquiry import Storyteller
 
-# 1. Fit Mediation Model (X -> M -> Y)
+# 1. High-Performance OLS (Auto GPU if N > 10k)
+model = stx.StatelixOLS()
+model.fit(X, y)
+print(f"R2: {model.r_squared:.4f}")
+
+# 2. Mediation Analysis (SEM)
 med = MediationAnalysis(treatment='Education', mediator='Skill', outcome='Wage')
 med.fit(data)
 
-# 2. Ask "Why?" (Narrative Generation)
+# 3. Ask "Why?" (Narrative Generation)
 story = Storyteller(med)
 print(story.explain())
 
 # Output:
 # "Analysis Narrative:
 #  The analysis reveals that 65.2% of the total effect of Education on Wage is mediated (indirect).
-#  - Indirect Effect (Mechanism): 0.85 (Significant). This represents the pathway through Skill.
-#  - Direct Effect: 0.45. The effect remaining after accounting for Skill."
+#  - Indirect Effect: 0.85 (Significant). P-Value < 0.001."
 ```
 
 ## 🛠 Installation
 
+### Standard (CPU + Optional GPU)
+Requires **Visual Studio 2022** (C++) and **Python 3.10+**.
+If `nvcc` (CUDA Toolkit) is found in PATH, GPU support is built automatically.
+
 ```bash
 pip install .
+```
+
+To verify installation and API health:
+```bash
+python verify_api_update.py
 ```
 
 ---

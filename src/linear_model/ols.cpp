@@ -20,7 +20,8 @@ OLSResult fit_ols_full(
     const Eigen::MatrixXd& X, 
     const Eigen::VectorXd& y,
     bool fit_intercept,
-    double conf_level
+    double conf_level,
+    const Eigen::MatrixXd* gram_matrix
 ) {
     OLSResult result;
     int n = X.rows();
@@ -41,6 +42,10 @@ OLSResult fit_ols_full(
     Eigen::VectorXd weights = Eigen::VectorXd::Ones(n);
     WeightedDesignMatrix wdm(X_design, weights);
     WeightedSolver solver(SolverStrategy::AUTO);
+    
+    if (gram_matrix) {
+        solver.set_precomputed_gram(*gram_matrix);
+    }
     
     Eigen::VectorXd beta = solver.solve(wdm, y);
     result.n_params = beta.size();

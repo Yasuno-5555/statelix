@@ -56,6 +56,8 @@
 #include "../search/hnsw.h"
 #endif
 
+#include "../linear_model/solver.h"
+
 namespace statelix {
 
 // =============================================================================
@@ -301,6 +303,10 @@ public:
         // Logistic regression via IRLS
         Eigen::VectorXd beta = Eigen::VectorXd::Zero(k + 1);
         
+        // Weighted Solver for robust IRLS
+        // Using AUTO strategy to fallback to QR if XT W X is singular (e.g. collinearity)
+        WeightedSolver solver(SolverStrategy::AUTO);
+        
         for (int iter = 0; iter < 50; ++iter) {
             Eigen::VectorXd eta = X_aug * beta;
             Eigen::VectorXd p(n);
@@ -312,29 +318,21 @@ public:
             Eigen::VectorXd w = p.array() * (1.0 - p.array());
             Eigen::VectorXd z = (eta.array() + (D - p).array() / w.array()).matrix();
             
-            // OPTIMIZATION KERNEL v2: Explicitly scale rows to avoid hidden dense temporaries
-            // 1. Scale X rows by sqrt(w) - O(N*K)
-            // Eigen::MatrixXd X_w = w.cwiseSqrt().asDiagonal() * X_aug;
-            // Actually, scaling is just X_aug.array().colwise() * w.cwiseSqrt().array()
-            // But w.asDiagonal() * X is standard.
+            // Use WeightedSolver for efficiency and robustness
+            // Re-create WeightedDesignMatrix as weights change every iteration
+            WeightedDesignMatrix wdm(X_aug, w);
             
-            // Safe approach: Weighted Normal Equations (X'WX)beta = X'Wz
-            // Calculate X'WX without forming W
-            // H = X' * diag(w) * X.
-            // Let X_s = diag(sqrt(w)) * X. Then H = X_s' * X_s.
+            // Reset solver to force re-decomposition
+            solver.reset();
             
-            // Note: Creating X_s is (N, K). N=10k, K=20 -> 200k doubles. Fast.
-            Eigen::MatrixXd X_s = w.array().sqrt().matrix().asDiagonal() * X_aug;
-            Eigen::MatrixXd H = Eigen::MatrixXd(k+1, k+1);
-            H.setZero();
-            H.selfadjointView<Eigen::Lower>().rankUpdate(X_s.transpose());
-            
-            // X' W z
-            // z is (N). W is diagonal (N). 
-            Eigen::VectorXd Wz = w.asDiagonal() * z;
-            Eigen::VectorXd rhs = X_aug.transpose() * Wz;
-            
-            Eigen::VectorXd beta_new = H.selfadjointView<Eigen::Lower>().ldlt().solve(rhs);
+            Eigen::VectorXd beta_new;
+            try {
+                beta_new = solver.solve(wdm, z);
+            } catch (const std::exception& e) {
+                // If even QR fails, break or throw? 
+                // For now, stop iteration.
+                break;
+            }
             
             if ((beta_new - beta).norm() < 1e-8) {
                 beta = beta_new;

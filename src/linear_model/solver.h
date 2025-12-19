@@ -198,34 +198,53 @@ public:
         return ldlt_.vectorD().size(); // This is just P
     }
 
+    // 事前に計算されたGram行列 (X^T W X) をセット
+    void set_precomputed_gram(const Eigen::MatrixXd& gram) {
+        precomputed_gram_ = gram;
+        has_precomputed_gram_ = true;
+    }
+
 private:
     void compute_decomposition_if_needed(const WeightedDesignMatrix& wdm) {
         if (is_decomposed_) return;
 
         if (strategy_ == SolverStrategy::QR) {
+             // QR requires sqrt(W)*X, precomputed X^T W X is useless here
             perform_qr(wdm);
         } else {
             // Try Cholesky (LDLT)
-            Eigen::MatrixXd A = wdm.compute_gram();
+            bool used_precomputed = false;
+            Eigen::MatrixXd A;
+            
+            if (has_precomputed_gram_) {
+                // Verify dimension
+                if (precomputed_gram_.rows() == wdm.cols() && 
+                    precomputed_gram_.cols() == wdm.cols()) {
+                    A = precomputed_gram_;
+                    used_precomputed = true;
+                } else {
+                    // Mismatch, ignore and recompute (or warn?)
+                    // For safety, fallback to compute.
+                    A = wdm.compute_gram();
+                }
+            } else {
+                A = wdm.compute_gram();
+            }
+
             ldlt_.compute(A);
             
-            // Check success and rank deficiency
-            // LDLT is robust to semi-definite, but info() will be Success even if singular?
-            // Eigen::LDLT::info() returns NumericalIssue if indefinite.
-            // For PSD matrices, it usually works.
-            // But if we want to detect singularity for AUTO fallback:
-            // We can check the diagonal D.
-            
             bool is_good = (ldlt_.info() == Eigen::Success);
-            
-            // Heuristic for singularity in LDLT: check min(abs(D)) / max(abs(D)) ?
-            // For now, trust Eigen's info.
              
             if (strategy_ == SolverStrategy::AUTO && !is_good) {
                 // Fallback to QR
                 use_qr_fallback_ = true;
                 perform_qr(wdm);
             } else if (!is_good) {
+                if (used_precomputed) {
+                    // Retry with CPU computation in case GPU one was corrupted? 
+                    // Or just fail. User "Correctness" requirement implies we trust inputs or fail.
+                    throw std::runtime_error("LDLT decomposition failed with precomputed Gram matrix.");
+                }
                 throw std::runtime_error("LDLT decomposition failed. Matrix might be indefinite.");
             } else {
                 use_qr_fallback_ = false;
@@ -242,6 +261,10 @@ private:
     SolverStrategy strategy_;
     bool is_decomposed_;
     bool use_qr_fallback_;
+    
+    // Precomputed support
+    bool has_precomputed_gram_ = false;
+    Eigen::MatrixXd precomputed_gram_;
 
     // Decompositions
     Eigen::LDLT<Eigen::MatrixXd> ldlt_;

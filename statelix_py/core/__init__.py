@@ -11,5 +11,11 @@ try:
     # Attempt import but ignore failure
     # from .statelix_core import causal
     pass
+    pass
 except ImportError:
     pass
+
+try:
+    import statelix.accelerator as accelerator
+except ImportError:
+    accelerator = None

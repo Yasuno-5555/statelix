@@ -34,7 +34,8 @@ OLSResult fit_ols_full(
     const Eigen::MatrixXd& X, 
     const Eigen::VectorXd& y,
     bool fit_intercept = true,
-    double conf_level = 0.95
+    double conf_level = 0.95,
+    const Eigen::MatrixXd* gram_matrix = nullptr
 );
 
 // Prediction

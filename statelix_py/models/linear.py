@@ -1,6 +1,11 @@
 import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin
 from ..core import FitOLS
+try:
+    import statelix.accelerator as acc
+    HAS_ACCELERATOR = True
+except ImportError:
+    HAS_ACCELERATOR = False
 
 class StatelixOLS(BaseEstimator, RegressorMixin):
     """
@@ -20,11 +25,28 @@ class StatelixOLS(BaseEstimator, RegressorMixin):
         X = np.ascontiguousarray(X, dtype=np.float64)
         y = np.ascontiguousarray(y, dtype=np.float64)
         
+        gram = None
+        # Attempt GPU Acceleration if problem is large enough
+        if HAS_ACCELERATOR and X.shape[0] > 10000:
+            if acc.is_available():
+                try:
+                    # Construct augmented matrix [1, X] because FitOLS enforces intercept
+                    # Note: If self.fit_intercept is False, logic differs, but current FitOLS hardcodes True.
+                    # We assume True for now to match C++.
+                    N, K = X.shape
+                    X_aug = np.empty((N, K + 1), dtype=np.float64)
+                    X_aug[:, 0] = 1.0
+                    X_aug[:, 1:] = X
+                    
+                    weights = np.ones(N, dtype=np.float64)
+                    
+                    gram = acc.weighted_gram_matrix(X_aug, weights)
+                except Exception:
+                    # Fallback to CPU silently on any GPU error
+                    gram = None
+
         self.model_ = FitOLS()
-        # fit method in C++ takes (X, y) and uses fit_intercept internally (hardcoded to true/conf_level 0.95 in current binding wrapper)
-        # But wait, looking at python_bindings_linear.cpp: result = fit_ols_full(X, y, true, 0.95);
-        # It ignores self.fit_intercept passed to python class if I don't update bindings, but for now let's just use what's there.
-        self.model_.fit(X, y)
+        self.model_.fit(X, y, gram=gram)
         
         self.coef_ = np.array(self.model_.coef_)
         self.intercept_ = self.model_.intercept_
