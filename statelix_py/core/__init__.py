@@ -11,5 +11,5 @@ try:
     # Attempt import but ignore failure
     # from .statelix_core import causal
     pass
-except:
+except ImportError:
     pass

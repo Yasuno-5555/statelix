@@ -1,6 +1,4 @@
 import numpy as np
-import sys
-import os
 
 try:
     from .. import statelix_core as _core

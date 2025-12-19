@@ -1,8 +1,8 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
-    QComboBox, QTextEdit, QStackedWidget, QFrame, QSplitter,
-    QListWidget, QGroupBox, QRadioButton, QButtonGroup, QScrollArea
+    QComboBox, QTextEdit, QSplitter, QGroupBox, QRadioButton, QButtonGroup,
+    QFormLayout, QDoubleSpinBox
 )
 from PySide6.QtCore import Qt, Signal
 import matplotlib.pyplot as plt
@@ -67,7 +67,6 @@ class InquiryPanel(QWidget):
         input_layout.addWidget(var_group)
         
         # 3. Simulation Settings (Hidden by default)
-        from PySide6.QtWidgets import QDoubleSpinBox
         self.sim_group = QGroupBox("3. Simulation Settings")
         s_layout = QFormLayout()
         
@@ -175,7 +174,6 @@ class InquiryPanel(QWidget):
 
     def on_ask(self):
         # Prepare Inquiry Request
-        mode = "Association"
         mid = self.q_btn_group.checkedId()
         
         params = {
@@ -211,4 +209,3 @@ class InquiryPanel(QWidget):
         ax = self.figure.add_subplot(111)
         fig_func(ax)
         self.canvas.draw()
-from PySide6.QtWidgets import QFormLayout 

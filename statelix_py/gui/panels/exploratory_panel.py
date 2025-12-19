@@ -1,7 +1,7 @@
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableView, QLabel, QSplitter, 
-    QTabWidget, QComboBox, QCheckBox, QFrame, QTextEdit
+    QTabWidget, QComboBox, QTextEdit
 )
 from PySide6.QtCore import Qt, Slot
 import pandas as pd
@@ -48,6 +48,12 @@ class ExploratoryPanel(QWidget):
         self.corr_view.setModel(self.corr_model)
         stats_tabs.addTab(self.corr_view, "相関行列")
         
+        # 3. Statistical Tests
+        self.tests_output = QTextEdit()
+        self.tests_output.setReadOnly(True)
+        self.tests_output.setPlaceholderText("Select a variable and run tests...")
+        stats_tabs.addTab(self.tests_output, "統計検定 (Tests)")
+        
         splitter.addWidget(stats_tabs)
         
         # --- Bottom: Visualization ---
@@ -59,7 +65,7 @@ class ExploratoryPanel(QWidget):
         
         ctrl_layout.addWidget(QLabel("Plot Type:"))
         self.plot_type = QComboBox()
-        self.plot_type.addItems(["Histogram", "Box Plot", "Scatter Plot"])
+        self.plot_type.addItems(["Histogram", "Box Plot", "Violin Plot", "Scatter Plot", "Pair Plot"])
         self.plot_type.currentTextChanged.connect(self.update_plot)
         ctrl_layout.addWidget(self.plot_type)
         
@@ -110,6 +116,23 @@ class ExploratoryPanel(QWidget):
             self.corr_model.set_data(corr)
         else:
             self.corr_model.set_data(pd.DataFrame(columns=["No numeric data"]))
+        
+        # Run normality tests on first 3 numeric columns
+        try:
+            from statelix_py.stats.tests import shapiro_wilk, format_test_result
+            test_results = []
+            for col in num_df.columns[:3]:
+                data = num_df[col].dropna().values
+                if len(data) >= 3:
+                    result = shapiro_wilk(data)
+                    test_results.append(f"<b>{col}</b>\n{format_test_result(result)}")
+            
+            if test_results:
+                self.tests_output.setHtml("<pre>" + "\n\n".join(test_results) + "</pre>")
+            else:
+                self.tests_output.setText("No numeric data for testing.")
+        except Exception as e:
+            self.tests_output.setText(f"Test error: {e}")
             
         # Update Combo Boxes
         cols = df.columns.tolist()
@@ -175,6 +198,51 @@ class ExploratoryPanel(QWidget):
                                       f"Range: [{data.min():.2f}, {data.max():.2f}].")
                         
                     self.y_var.setEnabled(False)
+
+            elif ptype == "Violin Plot":
+                if x_col:
+                    data = pd.to_numeric(df[x_col], errors='coerce').dropna()
+                    if data.empty:
+                        ax.text(0.5, 0.5, "No numeric data", ha='center')
+                    else:
+                        parts = ax.violinplot(data, vert=False, showmeans=True, showmedians=True)
+                        for pc in parts['bodies']:
+                            pc.set_facecolor('#3273dc')
+                            pc.set_alpha(0.7)
+                        ax.set_title(f"Violin Plot of {x_col}")
+                        
+                        skew = stats.skew(data)
+                        kurt = stats.kurtosis(data)
+                        insight_text = (f"<b>Facts:</b> Skewness={skew:.2f}, Kurtosis={kurt:.2f}. "
+                                      f"Mean={data.mean():.2f}, Median={data.median():.2f}.")
+                        
+                    self.y_var.setEnabled(False)
+
+            elif ptype == "Pair Plot":
+                # Use up to 4 numeric columns for pair plot
+                num_df = df.select_dtypes(include=[np.number])
+                cols = num_df.columns[:4].tolist()
+                if len(cols) < 2:
+                    ax.text(0.5, 0.5, "Need at least 2 numeric columns", ha='center')
+                else:
+                    self.figure.clear()
+                    n = len(cols)
+                    for i, c1 in enumerate(cols):
+                        for j, c2 in enumerate(cols):
+                            ax = self.figure.add_subplot(n, n, i * n + j + 1)
+                            if i == j:
+                                ax.hist(num_df[c1].dropna(), bins=15, alpha=0.7)
+                            else:
+                                ax.scatter(num_df[c2], num_df[c1], alpha=0.5, s=5)
+                            if i == n - 1:
+                                ax.set_xlabel(c2, fontsize=7)
+                            if j == 0:
+                                ax.set_ylabel(c1, fontsize=7)
+                            ax.tick_params(labelsize=5)
+                    self.figure.tight_layout()
+                    insight_text = f"<b>Pair Plot:</b> Showing correlations for {', '.join(cols)}."
+                    
+                self.y_var.setEnabled(False)
                     
             elif ptype == "Scatter Plot":
                 if x_col and y_col:

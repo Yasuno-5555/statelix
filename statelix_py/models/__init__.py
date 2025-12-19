@@ -6,9 +6,11 @@ from .causal import (
     InverseProbabilityWeighting,
     DoublyRobust,
     DifferenceInDifferences,
+    InstrumentalVariables,
     # Aliases for backward compatibility
     StatelixPSM,
     StatelixDID,
+    StatelixIV,
 )
 from .synthetic_control import SyntheticControl, SyntheticControlResult
 from .spatial import SpatialRegression, SpatialWeights
@@ -46,9 +48,9 @@ __all__ = [
     "StatelixHMC", "BayesianLogisticRegression",
     # Causal inference
     "PropensityScoreMatching", "InverseProbabilityWeighting", "DoublyRobust",
-    "DifferenceInDifferences",
+    "DifferenceInDifferences", "InstrumentalVariables",
     # Aliases
-    "StatelixPSM", "StatelixDID",
+    "StatelixPSM", "StatelixDID", "StatelixIV",
     "SyntheticControl", "SyntheticControlResult",
     "SpatialRegression", "SpatialWeights",
     # Graph

@@ -970,3 +970,231 @@ class DifferenceInDifferences:
 
 # Export aliases
 StatelixDID = DifferenceInDifferences
+
+
+# =============================================================================
+# Instrumental Variables (2SLS)
+# =============================================================================
+
+@dataclass
+class IVResult:
+    """Result from Instrumental Variables estimation."""
+    coef: np.ndarray           # 2SLS coefficients
+    se: np.ndarray             # Standard errors
+    t_stat: np.ndarray         # T-statistics
+    p_values: np.ndarray       # P-values
+    r_squared: float           # R-squared
+    adj_r_squared: float       # Adjusted R-squared
+    n_obs: int                 # Number of observations
+    n_instruments: int         # Number of instruments
+    first_stage_f: float       # First-stage F-statistic (weak instrument test)
+    
+    def summary(self) -> pd.DataFrame:
+        """Return summary DataFrame."""
+        return pd.DataFrame({
+            'coef': self.coef,
+            'std_err': self.se,
+            't_stat': self.t_stat,
+            'p_value': self.p_values
+        })
+    
+    def __repr__(self):
+        return (f"IVResult(n={self.n_obs}, k_instr={self.n_instruments}, "
+                f"first_stage_F={self.first_stage_f:.2f}, R²={self.r_squared:.4f})")
+
+
+class InstrumentalVariables:
+    """
+    Instrumental Variables (2SLS) Estimator.
+    
+    Two-Stage Least Squares for causal inference when endogeneity is present.
+    
+    Parameters
+    ----------
+    add_constant : bool, default=True
+        Add constant term to the model
+        
+    Examples
+    --------
+    >>> iv = InstrumentalVariables()
+    >>> iv.fit(y, X_endogenous, Z_instruments, X_exogenous=None)
+    >>> print(iv.coef_, iv.se_)
+    """
+    
+    def __init__(self, add_constant: bool = True):
+        self.add_constant = add_constant
+        self.result_: Optional[IVResult] = None
+        self.coef_ = None
+        self.se_ = None
+        self.fitted_values_ = None
+    
+    def fit(
+        self,
+        y: np.ndarray,
+        X_endog: np.ndarray,
+        Z: np.ndarray,
+        X_exog: Optional[np.ndarray] = None
+    ) -> 'InstrumentalVariables':
+        """
+        Fit 2SLS model.
+        
+        Parameters
+        ----------
+        y : array-like, shape (n,)
+            Outcome variable
+        X_endog : array-like, shape (n,) or (n, k_endog)
+            Endogenous regressors
+        Z : array-like, shape (n,) or (n, k_instr)
+            Instrumental variables
+        X_exog : array-like, optional, shape (n, k_exog)
+            Exogenous regressors (if any)
+            
+        Returns
+        -------
+        self
+        """
+        # Convert to numpy arrays
+        y = np.ascontiguousarray(y, dtype=np.float64).ravel()
+        X_endog = np.ascontiguousarray(X_endog, dtype=np.float64)
+        Z = np.ascontiguousarray(Z, dtype=np.float64)
+        
+        if X_endog.ndim == 1:
+            X_endog = X_endog.reshape(-1, 1)
+        if Z.ndim == 1:
+            Z = Z.reshape(-1, 1)
+        
+        n = len(y)
+        k_endog = X_endog.shape[1]
+        k_instr = Z.shape[1]
+        
+        # Build instrument matrix (Z + exogenous)
+        if X_exog is not None:
+            X_exog = np.ascontiguousarray(X_exog, dtype=np.float64)
+            if X_exog.ndim == 1:
+                X_exog = X_exog.reshape(-1, 1)
+            Z_full = np.hstack([Z, X_exog])
+            X_full = np.hstack([X_endog, X_exog])
+        else:
+            Z_full = Z
+            X_full = X_endog
+        
+        # Add constant if requested
+        if self.add_constant:
+            Z_full = np.hstack([np.ones((n, 1)), Z_full])
+            X_full = np.hstack([np.ones((n, 1)), X_full])
+        
+        k = X_full.shape[1]
+        
+        # Stage 1: Regress X_endog on Z (get predicted X)
+        # X_endog = Z @ gamma + v
+        ZTZ_inv = np.linalg.pinv(Z_full.T @ Z_full)
+        gamma = ZTZ_inv @ Z_full.T @ X_endog
+        X_endog_hat = Z_full @ gamma
+        
+        # First-stage F-statistic (weak instrument test)
+        # F = (SSR_reduced - SSR_full) / k_instr / (SSR_full / (n - k_instr - 1))
+        resid_first = X_endog - X_endog_hat
+        ssr_first = np.sum(resid_first**2)
+        sst_first = np.sum((X_endog - np.mean(X_endog, axis=0))**2)
+        r2_first = 1 - ssr_first / sst_first if sst_first > 0 else 0
+        
+        # Simplified F-stat for single endogenous regressor
+        if k_endog == 1:
+            first_stage_f = (r2_first / k_instr) / ((1 - r2_first) / (n - k_instr - 1))
+        else:
+            first_stage_f = r2_first * (n - k_instr) / (k_instr * (1 - r2_first + 1e-10))
+        
+        # Stage 2: Regress y on X_endog_hat (and exogenous)
+        if X_exog is not None:
+            if self.add_constant:
+                X_stage2 = np.hstack([np.ones((n, 1)), X_endog_hat, X_exog])
+            else:
+                X_stage2 = np.hstack([X_endog_hat, X_exog])
+        else:
+            if self.add_constant:
+                X_stage2 = np.hstack([np.ones((n, 1)), X_endog_hat])
+            else:
+                X_stage2 = X_endog_hat
+        
+        # 2SLS coefficient: (X'PzX)^-1 X'Pzy where Pz = Z(Z'Z)^-1Z'
+        Pz = Z_full @ ZTZ_inv @ Z_full.T
+        XPzX_inv = np.linalg.pinv(X_full.T @ Pz @ X_full)
+        beta = XPzX_inv @ X_full.T @ Pz @ y
+        
+        # Fitted values and residuals (using original X, not predicted)
+        y_hat = X_full @ beta
+        residuals = y - y_hat
+        
+        # Standard errors (robust to heteroskedasticity)
+        ssr = np.sum(residuals**2)
+        sigma2 = ssr / (n - k)
+        
+        # SE using 2SLS variance formula
+        var_beta = sigma2 * XPzX_inv
+        se = np.sqrt(np.diag(var_beta))
+        
+        # T-statistics and p-values
+        t_stat = beta / (se + 1e-10)
+        p_values = 2 * (1 - self._t_cdf(np.abs(t_stat), n - k))
+        
+        # R-squared
+        sst = np.sum((y - np.mean(y))**2)
+        r_squared = 1 - ssr / sst if sst > 0 else 0
+        adj_r_squared = 1 - (1 - r_squared) * (n - 1) / (n - k)
+        
+        self.coef_ = beta
+        self.se_ = se
+        self.fitted_values_ = y_hat
+        
+        self.result_ = IVResult(
+            coef=beta,
+            se=se,
+            t_stat=t_stat,
+            p_values=p_values,
+            r_squared=r_squared,
+            adj_r_squared=adj_r_squared,
+            n_obs=n,
+            n_instruments=k_instr,
+            first_stage_f=first_stage_f
+        )
+        
+        return self
+    
+    @staticmethod
+    def _t_cdf(t: np.ndarray, df: int) -> np.ndarray:
+        """Approximate t-distribution CDF using normal for large df."""
+        from math import erf, sqrt
+        # For df > 30, t ≈ normal
+        if df > 30:
+            return 0.5 * (1 + np.vectorize(lambda x: erf(x / sqrt(2)))(t))
+        else:
+            # Use scipy if available, else normal approximation
+            try:
+                from scipy.stats import t as t_dist
+                return t_dist.cdf(t, df)
+            except ImportError:
+                return 0.5 * (1 + np.vectorize(lambda x: erf(x / sqrt(2)))(t))
+    
+    def predict(self, X_new: np.ndarray) -> np.ndarray:
+        """Predict using fitted model."""
+        if self.coef_ is None:
+            raise RuntimeError("Model not fitted. Call fit() first.")
+        
+        X_new = np.ascontiguousarray(X_new, dtype=np.float64)
+        if X_new.ndim == 1:
+            X_new = X_new.reshape(-1, 1)
+        
+        if self.add_constant:
+            X_new = np.hstack([np.ones((X_new.shape[0], 1)), X_new])
+        
+        return X_new @ self.coef_
+    
+    def summary(self) -> pd.DataFrame:
+        """Return summary DataFrame."""
+        if self.result_ is None:
+            raise RuntimeError("Model not fitted. Call fit() first.")
+        return self.result_.summary()
+
+
+# Export alias
+StatelixIV = InstrumentalVariables

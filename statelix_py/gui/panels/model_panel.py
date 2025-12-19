@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QComboBox, QFrame, QHBoxLayout, 
+    QWidget, QVBoxLayout, QLabel, QComboBox, QHBoxLayout, 
     QPushButton, QFormLayout, QListWidget, QSpinBox, QDoubleSpinBox, QGroupBox,
     QScrollArea
 )
@@ -30,13 +30,19 @@ class ModelPanel(QWidget):
             "Ridge Regression",
             "Lasso Regression",
             "Elastic Net",
+            "Mixed Effects (混合効果)",
             # --- GLM ---
             "--- GLM (一般化線形モデル) ---",
             "GLM: Logistic (二項)",
             "GLM: Poisson (カウント)",
             "GLM: Gamma (正値連続)",
             "GLM: Negative Binomial (過分散)",
+            "GLM: Probit",
             "Quantile Regression (分位点)",
+            # --- Discrete Choice ---
+            "--- Discrete Choice (離散選択) ---",
+            "Ordered Model (順序ロジット)",
+            "Multinomial Logit (多項ロジット)",
             # --- Time Series ---
             "--- Time Series ---",
             "AR Model (自己回帰)",
@@ -56,12 +62,23 @@ class ModelPanel(QWidget):
             "Causal: IV (2SLS)",
             "Causal: Diff-in-Diff",
             "Causal: PSM (傾向スコア)",
+            "Causal: IPW (逆確率重み付け)",
+            "Causal: Doubly Robust (AIPW)",
             "Causal: RDD (回帰不連続)",
             "Causal: GMM",
             "Causal: Synthetic Control",
+            # --- Structural Equation ---
+            "--- SEM (構造方程式) ---",
+            "Path Analysis (パス解析)",
+            "Mediation Analysis (媒介分析)",
             # --- Survival ---
             "--- Survival Analysis ---",
+            "Kaplan-Meier (生存曲線)",
+            "Log-Rank Test (検定)",
             "Cox Proportional Hazards",
+            # --- Spatial ---
+            "--- Spatial (空間統計) ---",
+            "Spatial Regression",
             # --- Bayesian ---
             "--- Bayesian ---",
             "Bayesian: MAP (最大事後)",
@@ -83,9 +100,24 @@ class ModelPanel(QWidget):
             # --- Signal Processing ---
             "--- Signal Processing ---",
             "Signal: Wavelet Transform",
-            # --- Statistics ---
-            "--- Statistics ---",
-            "ANOVA (分散分析)",
+            # --- Statistics & Tests ---
+            "--- Statistics (統計検定) ---",
+            "ANOVA: One-Way (一元配置)",
+            "ANOVA: Two-Way (二元配置)",
+            "ANOVA: ANCOVA (共分散分析)",
+            "TukeyHSD (多重比較)",
+            "T-Test (t検定)",
+            "Chi-Squared Test (カイ二乗)",
+            "Mann-Whitney U (順位和)",
+            "Kruskal-Wallis (順位分散)",
+            "Wilcoxon Test (符号順位)",
+            # --- Diagnostics ---
+            "--- Diagnostics (診断) ---",
+            "VIF (多重共線性)",
+            "Durbin-Watson (自己相関)",
+            "Breusch-Pagan (分散不均一)",
+            "White Test (分散不均一)",
+            "Cook's Distance (外れ値)",
             # --- WASM Plugins (dynamic) ---
             "--- WASM Plugins ---"
         ])
@@ -482,7 +514,7 @@ from statelix_py.core.data_manager import DataManager
 # df = pd.read_csv("your_data.csv")
 '''
         
-        code += f"\n# 2. Select Variables\n"
+        code += "\n# 2. Select Variables\n"
         code += f"y_col = '{target}'\n"
         code += f"x_cols = {features}\n"
         if aux: code += f"z_col = '{aux}'\n"

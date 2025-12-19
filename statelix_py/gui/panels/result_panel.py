@@ -1,6 +1,7 @@
+import pandas as pd
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QTextEdit, QHBoxLayout, QFrame,
-    QPushButton
+    QPushButton, QFileDialog, QMessageBox
 )
 from PySide6.QtCore import Qt
 
@@ -52,9 +53,18 @@ class ResultPanel(QWidget):
         self.btn_copy_md.clicked.connect(self.on_copy_markdown)
         self.btn_copy_tex = QPushButton("Copy LaTeX")
         self.btn_copy_tex.clicked.connect(self.on_copy_latex)
+        self.btn_export_csv = QPushButton("Export CSV")
+        self.btn_export_csv.clicked.connect(self.on_export_csv)
+        self.btn_export_excel = QPushButton("Export Excel")
+        self.btn_export_excel.clicked.connect(self.on_export_excel)
+        self.btn_report = QPushButton("Generate Report")
+        self.btn_report.clicked.connect(self.on_generate_report)
         
         tools.addWidget(self.btn_copy_md)
         tools.addWidget(self.btn_copy_tex)
+        tools.addWidget(self.btn_export_csv)
+        tools.addWidget(self.btn_export_excel)
+        tools.addWidget(self.btn_report)
         
         text_layout.addLayout(tools)
         
@@ -86,6 +96,7 @@ class ResultPanel(QWidget):
         self.setLayout(layout)
 
     def display_result(self, result_data: dict):
+        self._last_result = result_data # Store for export
         success = result_data.get('success', True)
         
         if success:
@@ -99,29 +110,80 @@ class ResultPanel(QWidget):
         self.mse_label.setText(f"MSE: {result_data.get('mse', 'N/A')}")
         
         summary = result_data.get('summary', '')
+        # If there's a table in result, format it
+        if 'table' in result_data:
+            df = result_data['table']
+            if isinstance(df, pd.DataFrame):
+                summary += "\n\n" + df.to_string()
+        
         self.result_text.setText(summary)
         
         log_level = "[INFO]" if success else "[ERROR]"
         self.log_view.append(f"{log_level} Analysis completed. Hash: {result_data.get('hash', '???')}")
 
     def on_copy_markdown(self):
-        text = self.result_text.toPlainText()
-        if not text: return
-        
-        # Simple wrap
-        md_text = "```\n" + text + "\n```"
+        if not hasattr(self, '_last_result'): return
+        res = self._last_result
+        if 'table' in res and isinstance(res['table'], pd.DataFrame):
+            text = res['table'].to_markdown()
+        else:
+            text = "```\n" + self.result_text.toPlainText() + "\n```"
         
         from PySide6.QtWidgets import QApplication, QMessageBox
-        QApplication.clipboard().setText(md_text)
-        QMessageBox.information(self, "Copied", "Result copied as Markdown code block.")
+        QApplication.clipboard().setText(text)
+        QMessageBox.information(self, "Copied", "Result copied as Markdown.")
 
     def on_copy_latex(self):
-        text = self.result_text.toPlainText()
-        if not text: return
-        
-        # Simple verbatim wrap
-        tex_text = "\\begin{verbatim}\n" + text + "\n\\end{verbatim}"
+        if not hasattr(self, '_last_result'): return
+        res = self._last_result
+        if 'table' in res and isinstance(res['table'], pd.DataFrame):
+            text = res['table'].to_latex()
+        else:
+            text = "\\begin{verbatim}\n" + self.result_text.toPlainText() + "\n\\end{verbatim}"
         
         from PySide6.QtWidgets import QApplication, QMessageBox
-        QApplication.clipboard().setText(tex_text)
-        QMessageBox.information(self, "Copied", "Result copied as LaTeX verbatim environment.")
+        QApplication.clipboard().setText(text)
+        QMessageBox.information(self, "Copied", "Result copied as LaTeX.")
+
+    def on_export_csv(self):
+        if not hasattr(self, '_last_result') or 'table' not in self._last_result:
+            QMessageBox.warning(self, "Warning", "No table data to export.")
+            return
+        
+        path, _ = QFileDialog.getSaveFileName(self, "Export CSV", "", "CSV Files (*.csv)")
+        if path:
+            self._last_result['table'].to_csv(path, index=False)
+            QMessageBox.information(self, "Success", f"Data exported to {path}")
+
+    def on_export_excel(self):
+        if not hasattr(self, '_last_result') or 'table' not in self._last_result:
+            QMessageBox.warning(self, "Warning", "No table data to export.")
+            return
+        
+        path, _ = QFileDialog.getSaveFileName(self, "Export Excel", "", "Excel Files (*.xlsx)")
+        if path:
+            self._last_result['table'].to_excel(path, index=False)
+            QMessageBox.information(self, "Success", f"Data exported to {path}")
+
+    def on_generate_report(self):
+        from statelix_py.utils.report_generator import ReportGenerator
+        from statelix_py.core.data_manager import DataManager
+        
+        dm = DataManager.instance()
+        report = ReportGenerator("Statelix Analysis Report")
+        
+        # Add descriptive stats if data available
+        if dm.df is not None:
+            report.add_descriptive_stats(dm.df)
+            report.add_correlation_matrix(dm.df)
+        
+        # Add last result
+        if hasattr(self, '_last_result'):
+            summary = self._last_result.get('summary', '')
+            table = self._last_result.get('table', None)
+            report.add_model_result("Analysis Result", summary, table)
+        
+        path, _ = QFileDialog.getSaveFileName(self, "Save Report", "", "HTML Files (*.html)")
+        if path:
+            report.save(path)
+            QMessageBox.information(self, "Success", f"Report saved to {path}")
