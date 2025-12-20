@@ -174,19 +174,28 @@ class BayesAdapter(BaseAdapter):
     def predict(self, X): return np.zeros(len(X))
     def get_coefficients(self): return {}
 
-from statelix.causal.core import BaseCausalModel
+# Safe Import for Causal
+try:
+    from statelix.causal import BaseCausalModel
+except ImportError:
+    # Fallback if specific class not found
+    class BaseCausalModel: pass
+
 class CausalAdapter(BaseAdapter):
     """Adapter for Causal."""
     def __init__(self, model):
         self.model = model
     def get_coefficients(self):
-        if self.model.params_ is not None:
+        if hasattr(self.model, 'params_') and self.model.params_ is not None:
              return {i: c for i, c in enumerate(self.model.params_)}
-        return {0: self.model.effect_} if self.model.effect_ is not None else {}
+        return {0: self.model.effect_} if hasattr(self.model, 'effect_') and self.model.effect_ is not None else {}
     def get_metrics(self):
         metrics = {}
-        if self.model.p_value_ is not None: metrics['p_value'] = self.model.p_value_
-        if self.model.effect_ is not None: metrics['effect'] = self.model.effect_
+        if hasattr(self.model, 'p_value_') and self.model.p_value_ is not None: 
+            metrics['p_value'] = self.model.p_value_
+        if hasattr(self.model, 'effect_') and self.model.effect_ is not None: 
+            metrics['effect'] = self.model.effect_
         return metrics 
     def predict(self, X): return self.model.predict(X)
-    def get_assumptions(self): return self.model.assumptions
+    def get_assumptions(self): 
+        return getattr(self.model, 'assumptions', [])

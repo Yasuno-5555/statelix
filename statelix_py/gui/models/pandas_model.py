@@ -47,29 +47,51 @@ class PandasModel(QAbstractTableModel):
             return Qt.ItemFlag.NoItemFlags
         return Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable
 
+    def sort(self, column, order):
+        if self._data is None: return
+        
+        col_name = self._data.columns[column]
+        ascending = (order == Qt.SortOrder.AscendingOrder)
+        
+        self.layoutAboutToBeChanged.emit()
+        try:
+            self._data.sort_values(by=col_name, ascending=ascending, inplace=True)
+        except Exception:
+            pass # sorting failed (e.g. mixed types)
+        self.layoutChanged.emit()
+
     def setData(self, index, value, role=Qt.ItemDataRole.EditRole):
         if not index.isValid() or role != Qt.ItemDataRole.EditRole:
             return False
 
         try:
-            # Basic type conversion attempt (very simple)
-            # In a real app, strict type checking/conversion based on column type is needed
             row = index.row()
             col = index.column()
             
-            # Cast to appropriate type if possible
-            current_type = self._data.iloc[:, col].dtype
+            # Smart Type Conversion
+            current_val = self._data.iloc[row, col]
+            # Try to infer type from current value or column dtype
+            import pandas as pd
+            import numpy as np
             
-            # TODO: Robust type conversion
-            if 'int' in str(current_type):
-                val = int(value)
-            elif 'float' in str(current_type):
-                val = float(value)
+            # Attempt conversion
+            if value == "":
+                val = np.nan
             else:
-                val = value
-
+                try:
+                    # Try numeric first if column is numeric
+                    if pd.api.types.is_numeric_dtype(self._data.iloc[:, col]):
+                        if '.' in value:
+                            val = float(value)
+                        else:
+                            val = int(value)
+                    else:
+                        val = value
+                except ValueError:
+                    val = value # Fallback to string
+                    
             self._data.iloc[row, col] = val
             self.dataChanged.emit(index, index, [Qt.ItemDataRole.DisplayRole, Qt.ItemDataRole.EditRole])
             return True
-        except ValueError:
+        except Exception:
             return False

@@ -20,7 +20,18 @@ class InquiryPanel(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        main_layout = QHBoxLayout(self)
+        main_layout = QVBoxLayout(self) # Changed to QV for Banner
+        
+        # --- 0. Responsibility Banner (Constitution) ---
+        banner = QLabel("⚠️ <b>STATELIX DOES NOT PROVIDE ANSWERS.</b><br>The interpretation of these results is <u>your responsibility</u>. AI only provides the scaffolding.")
+        banner.setStyleSheet("background-color: #FFF3CD; color: #856404; border: 1px solid #FFEEBA; padding: 10px; font-size: 13px; border-radius: 4px;")
+        banner.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        main_layout.addWidget(banner)
+        
+        # Splitter Container
+        splitter_container = QWidget()
+        h_layout = QHBoxLayout(splitter_container)
+        h_layout.setContentsMargins(0,0,0,0)
         
         # --- Left: The Interrogation Room (Inputs) ---
         input_container = QWidget()
@@ -36,9 +47,10 @@ class InquiryPanel(QWidget):
         self.r_causal = QRadioButton("🔬 Did X cause Y? (Causal Check)")
         self.r_whatif = QRadioButton("🔮 What if X changed? (Simulation)")
         
-        self.r_drivers.setToolTip("Finds variables strongly associated with the outcome.\nUses regularization (Lasso/Ridge) to screen predictors.")
-        self.r_causal.setToolTip("Tests for a causal relationship using IV, DiD, or RDD.\nChecks checks critical assumptions like parallel trends.")
-        self.r_whatif.setToolTip("Simulates a counterfactual world.\ne.g., 'What would GDP be if Logic didn't exist?'")
+        # Conceptual Tooltips (Metaphors)
+        self.r_drivers.setToolTip("<b>Drivers (Association):</b><br>Like checking which friends usually show up at the party together.<br>It doesn't mean one invited the other, just that they are often seen together.")
+        self.r_causal.setToolTip("<b>Causal Inference:</b><br>Like checking if pushing a button <i>actually turns on</i> the light,<br>or if you just happened to push it when the sun came up.<br>Requires strict assumptions (parallel worlds).")
+        self.r_whatif.setToolTip("<b>Counterfactual Simulation:</b><br>Imagining a parallel world: 'If I had studied 1 hour more, what would my score be?'<br>Based on the patterns found in the data.")
         
         self.q_btn_group.addButton(self.r_drivers, 1)
         self.q_btn_group.addButton(self.r_causal, 2)
@@ -59,9 +71,14 @@ class InquiryPanel(QWidget):
         self.combo_x = QComboBox() # Treatment/Driver
         self.combo_z = QComboBox() # Instrument/Control (Aux)
         
+        # Tooltips for Variables
+        self.combo_y.setToolTip("The result you care about (e.g., GDP, Health, Grades).")
+        self.combo_x.setToolTip("The factor you want to test (e.g., Policy, Medicine, Study Time).")
+        self.combo_z.setToolTip("<b>Instrument (The Nudge):</b><br>Something that pushes X but doesn't touch Y directly.<br><i>Example: A lottery that assigns study time (X), affecting grades (Y) only through studying.</i>")
+        
         v_layout.addRow("Outcome (Y):", self.combo_y)
         v_layout.addRow("Driver/Treatment (X):", self.combo_x)
-        v_layout.addRow("Instrument/Control (Z):", self.combo_z)
+        v_layout.addRow("Instrument/Z:", self.combo_z) # Shortened label
         
         var_group.setLayout(v_layout)
         input_layout.addWidget(var_group)
@@ -105,6 +122,11 @@ class InquiryPanel(QWidget):
         self.btn_ask.clicked.connect(self.on_ask)
         input_layout.addWidget(self.btn_ask)
         
+        # 5. Export Report Button
+        self.btn_export = QPushButton("📄 Save Report (HTML)")
+        self.btn_export.clicked.connect(self.on_export_report)
+        input_layout.addWidget(self.btn_export)
+        
         input_layout.addStretch()
         
         # --- Right: The Story (Output) ---
@@ -119,9 +141,9 @@ class InquiryPanel(QWidget):
             line-height: 1.5;
             padding: 10px;
         """)
-        self.narrative_box.setPlaceholderText("The story will appear here...")
+        self.narrative_box.setPlaceholderText("The scaffolding will appear here.\nYou will build the conclusion.")
         
-        narrative_container = QGroupBox("The Story")
+        narrative_container = QGroupBox("The Scaffolding (Facts & Hints)")
         n_layout = QVBoxLayout()
         n_layout.addWidget(self.narrative_box)
         narrative_container.setLayout(n_layout)
@@ -145,10 +167,68 @@ class InquiryPanel(QWidget):
         splitter.addWidget(output_splitter)
         splitter.setSizes([300, 700])
         
-        main_layout.addWidget(splitter)
+        h_layout.addWidget(splitter)
+        main_layout.addWidget(splitter_container)
         
         # Connections
         self.q_btn_group.buttonClicked.connect(self.update_ui_state)
+
+    def on_export_report(self):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        import datetime
+        
+        filename, _ = QFileDialog.getSaveFileName(self, "Save Report", "Statelix_Report.html", "HTML Files (*.html)")
+        if not filename: return
+        
+        try:
+            content = self.narrative_box.toHtml()
+            # Inject Instructions and Empty Conclusion
+            report_html = f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: sans-serif; line-height: 1.6; max-width: 800px; margin: 0 auto; padding: 20px; }}
+                    h1 {{ color: #2c3e50; }}
+                    h2 {{ color: #34495e; border-bottom: 2px solid #ecf0f1; padding-bottom: 10px; }}
+                    .warning {{ background-color: #fff3cd; color: #856404; padding: 15px; border: 1px solid #ffeeba; border-left: 5px solid #ffc107; margin-bottom: 20px; }}
+                    .conclusion {{ border: 2px dashed #bdc3c7; padding: 20px; background-color: #f9f9f9; color: #7f8c8d; min-height: 150px; }}
+                </style>
+            </head>
+            <body>
+                <h1>Statelix Analysis Report</h1>
+                <p>Generated on: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}</p>
+                
+                <div class="warning">
+                    <strong>⚠️ NOTE:</strong> This document contains analysis scaffolding provided by AI. 
+                    The final interpretation and conclusions are the responsibility of the author.
+                </div>
+                
+                <h2>1. Analysis Scaffolding (Facts & Hints)</h2>
+                {content}
+                
+                <h2>2. Conclusion (To Be Written by Author)</h2>
+                <div class="conclusion">
+                    <p><b>[INSTRUCTIONS]</b></p>
+                    <p>Based on the scaffolding above, write your conclusion here. Consider:</p>
+                    <ul>
+                        <li>Does the evidence support your initial hypothesis?</li>
+                        <li>Are there alternative explanations (confounders)?</li>
+                        <li>What are the limitations of this analysis?</li>
+                    </ul>
+                    <br><br>
+                    <i>(Delete this text and write your own conclusion.)</i>
+                </div>
+            </body>
+            </html>
+            """
+            
+            with open(filename, "w", encoding='utf-8') as f:
+                f.write(report_html)
+                
+            QMessageBox.information(self, "Success", f"Report template saved to:\n{filename}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Export Error", str(e))
         
     def update_columns(self, df):
         if df is None: return

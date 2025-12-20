@@ -103,6 +103,9 @@ def find_nvcc():
         return False
 
 HAS_NVCC = find_nvcc()
+if os.environ.get('STATELIX_NO_CUDA'):
+    print("STATELIX_NO_CUDA set. Skipping CUDA extensions.")
+    HAS_NVCC = False
 
 # Custom builder to handle .cu files
 class statelix_build_ext(build_ext):

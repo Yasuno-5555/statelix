@@ -79,6 +79,12 @@ class ExploratoryPanel(QWidget):
         self.y_var.currentTextChanged.connect(self.update_plot)
         ctrl_layout.addWidget(self.y_var)
         
+        ctrl_layout.addWidget(QLabel("Color By:"))
+        self.color_var = QComboBox()
+        self.color_var.addItem("(None)")
+        self.color_var.currentTextChanged.connect(self.update_plot)
+        ctrl_layout.addWidget(self.color_var)
+        
         viz_layout.addLayout(ctrl_layout)
         
         # Matplotlib Area with Toolbar
@@ -106,8 +112,11 @@ class ExploratoryPanel(QWidget):
         if df is None: return
         
         # Update Stats
-        desc = df.describe(include='all').round(3)
-        self.desc_model.set_data(desc)
+        try:
+            desc = df.describe(include='all').round(3)
+            self.desc_model.set_data(desc)
+        except:
+             pass # numeric errors
         
         # Correlation (numeric only)
         num_df = df.select_dtypes(include=[np.number])
@@ -123,14 +132,14 @@ class ExploratoryPanel(QWidget):
             test_results = []
             for col in num_df.columns[:3]:
                 data = num_df[col].dropna().values
-                if len(data) >= 3:
+                if len(data) >= 3 and len(data) < 5000: # Shapiro limit
                     result = shapiro_wilk(data)
                     test_results.append(f"<b>{col}</b>\n{format_test_result(result)}")
             
             if test_results:
                 self.tests_output.setHtml("<pre>" + "\n\n".join(test_results) + "</pre>")
             else:
-                self.tests_output.setText("No numeric data for testing.")
+                self.tests_output.setText("N < 3 or N > 5000 (Skipping Shapiro).")
         except Exception as e:
             self.tests_output.setText(f"Test error: {e}")
             
@@ -138,12 +147,26 @@ class ExploratoryPanel(QWidget):
         cols = df.columns.tolist()
         self.x_var.blockSignals(True)
         self.y_var.blockSignals(True)
-        self.x_var.clear()
-        self.y_var.clear()
-        self.x_var.addItems(cols)
-        self.y_var.addItems(cols)
+        self.color_var.blockSignals(True)
+        
+        self.x_var.clear(); self.x_var.addItems(cols)
+        self.y_var.clear(); self.y_var.addItems(cols)
+        
+        # Categorical columns for Color
+        self.color_var.clear()
+        self.color_var.addItem("(None)")
+        # Heuristic: object, category, or int with few unique
+        cat_cols = []
+        for c in df.columns:
+            if df[c].dtype == 'object' or str(df[c].dtype) == 'category':
+                cat_cols.append(c)
+            elif df[c].nunique() < 20: # discrete numeric likely categorical
+                cat_cols.append(c)
+        self.color_var.addItems(cat_cols)
+        
         self.x_var.blockSignals(False)
         self.y_var.blockSignals(False)
+        self.color_var.blockSignals(False)
         
         # Default plot
         self.update_plot()
@@ -155,48 +178,74 @@ class ExploratoryPanel(QWidget):
         ptype = self.plot_type.currentText()
         x_col = self.x_var.currentText()
         y_col = self.y_var.currentText()
+        color_col = self.color_var.currentText()
+        if color_col == "(None)": color_col = None
         
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         insight_text = ""
         
+        # Helper for coloring
+        groups = [(None, df)]
+        if color_col and color_col in df.columns:
+            # Drop NaNs in color col to avoid errors
+            valid_df = df.dropna(subset=[color_col])
+            # Limit groups to avoid chaos
+            if valid_df[color_col].nunique() > 20:
+                ax.text(0.5, 0.5, f"Too many groups in {color_col} (>20)", ha='center')
+                self.canvas.draw()
+                return
+            groups = list(valid_df.groupby(color_col))
+        
+        # Color Cycle
+        import itertools
+        colors = itertools.cycle(['#007bff', '#28a745', '#dc3545', '#ffc107', '#17a2b8', '#6610f2'])
+        
         try:
             if ptype == "Histogram":
                 if x_col:
-                    data = pd.to_numeric(df[x_col], errors='coerce').dropna()
-                    if data.empty:
-                        ax.text(0.5, 0.5, "No numeric data", ha='center')
+                    if color_col:
+                        # Stacked or layered hist
+                        data_list = []
+                        label_list = []
+                        for g_name, g_df in groups:
+                            d = pd.to_numeric(g_df[x_col], errors='coerce').dropna()
+                            if not d.empty:
+                                data_list.append(d)
+                                label_list.append(str(g_name))
+                        
+                        if data_list:
+                            ax.hist(data_list, bins='auto', alpha=0.7, label=label_list, stacked=True)
+                            ax.legend(title=color_col)
                     else:
-                        ax.hist(data, bins='auto', edgecolor='black', alpha=0.7)
-                        ax.set_title(f"Histogram of {x_col}")
-                        ax.set_xlabel(x_col)
-                        
-                        # Insight: Skewness and central tendency
-                        mean_val = data.mean()
-                        median_val = data.median()
-                        skew = stats.skew(data)
-                        n = len(data)
-                        insight_text = (f"<b>Facts:</b> N={n}. Mean={mean_val:.2f}, Median={median_val:.2f}. "
-                                      f"Skewness={skew:.2f} (>0 means right-tailed).")
-                        
+                        data = pd.to_numeric(df[x_col], errors='coerce').dropna()
+                        if not data.empty:
+                            ax.hist(data, bins='auto', edgecolor='black', alpha=0.7, color='#007bff')
+                    
+                    ax.set_title(f"Histogram of {x_col}")
+                    ax.set_xlabel(x_col)
                     self.y_var.setEnabled(False)
                     
             elif ptype == "Box Plot":
                 if x_col:
-                    data = pd.to_numeric(df[x_col], errors='coerce').dropna()
-                    if data.empty:
-                        ax.text(0.5, 0.5, "No numeric data", ha='center')
+                    if color_col:
+                         # Grouped Box Plot manually
+                         data_list = []
+                         labels = []
+                         for g_name, g_df in groups:
+                             d = pd.to_numeric(g_df[x_col], errors='coerce').dropna()
+                             if not d.empty:
+                                 data_list.append(d)
+                                 labels.append(str(g_name))
+                         
+                         if data_list:
+                             ax.boxplot(data_list, vert=False, labels=labels)
                     else:
-                        ax.boxplot(data, vert=False)
-                        ax.set_title(f"Box Plot of {x_col}")
-                        
-                        # Insight: IQR and Outliers
-                        q1 = data.quantile(0.25)
-                        q3 = data.quantile(0.75)
-                        iqr = q3 - q1
-                        insight_text = (f"<b>Facts:</b> Q1={q1:.2f}, Q3={q3:.2f}, IQR={iqr:.2f}. "
-                                      f"Range: [{data.min():.2f}, {data.max():.2f}].")
-                        
+                        data = pd.to_numeric(df[x_col], errors='coerce').dropna()
+                        if not data.empty:
+                            ax.boxplot(data, vert=False)
+                    
+                    ax.set_title(f"Box Plot of {x_col}")
                     self.y_var.setEnabled(False)
 
             elif ptype == "Violin Plot":
@@ -246,26 +295,30 @@ class ExploratoryPanel(QWidget):
                     
             elif ptype == "Scatter Plot":
                 if x_col and y_col:
-                    x_data = pd.to_numeric(df[x_col], errors='coerce')
-                    y_data = pd.to_numeric(df[y_col], errors='coerce')
-                    
-                    # Drop NaNs for plotting
-                    valid = ~np.isnan(x_data) & ~np.isnan(y_data)
-                    
-                    if valid.sum() == 0:
-                         ax.text(0.5, 0.5, "No valid pairs", ha='center')
-                    else:
-                        ax.scatter(x_data[valid], y_data[valid], alpha=0.6)
-                        ax.set_xlabel(x_col)
-                        ax.set_ylabel(y_col)
-                        ax.set_title(f"{y_col} vs {x_col}")
+                    for g_name, g_df in groups:
+                        c = next(colors) if color_col else '#007bff'
+                        lbl = str(g_name) if color_col else None
                         
-                        # Insight: Correlation
-                        corr = np.corrcoef(x_data[valid], y_data[valid])[0, 1]
-                        n = valid.sum()
-                        insight_text = (f"<b>Facts:</b> N={n}. Pearson Correlation r={corr:.3f}. "
-                                      f"R-squared={corr**2:.3f}.")
+                        x_data = pd.to_numeric(g_df[x_col], errors='coerce')
+                        y_data = pd.to_numeric(g_df[y_col], errors='coerce')
                         
+                        valid = ~np.isnan(x_data) & ~np.isnan(y_data)
+                        if valid.sum() > 0:
+                            ax.scatter(x_data[valid], y_data[valid], alpha=0.6, label=lbl, color=c)
+                    
+                    if color_col: ax.legend(title=color_col)
+                    ax.set_xlabel(x_col)
+                    ax.set_ylabel(y_col)
+                    ax.set_title(f"{y_col} vs {x_col}")
+                    
+                    # Insight: Overall Correlation
+                    full_x = pd.to_numeric(df[x_col], errors='coerce')
+                    full_y = pd.to_numeric(df[y_col], errors='coerce')
+                    v = ~np.isnan(full_x) & ~np.isnan(full_y)
+                    if v.sum() > 2:
+                        corr = np.corrcoef(full_x[v], full_y[v])[0, 1]
+                        insight_text = f"<b>Overall Correlation:</b> r={corr:.3f}"
+
                     self.y_var.setEnabled(True)
         
         except Exception as e:

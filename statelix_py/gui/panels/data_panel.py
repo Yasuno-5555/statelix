@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QPushButton, QFileDialog, QTableView, 
     QHBoxLayout, QFrame, QMessageBox, QInputDialog
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt
 import pandas as pd
 import os
 from statelix_py.core.data_manager import DataManager
@@ -79,8 +79,21 @@ class DataPanel(QWidget):
         self.table_view = QTableView()
         self.table_view.setModel(self.model)
         self.table_view.setAlternatingRowColors(True)
-        # self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table_view.setSortingEnabled(True) # Enable sorting
+        
+        # --- Context Menu ---
+        self.table_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table_view.customContextMenuRequested.connect(self.on_context_menu)
+        
         layout.addWidget(self.table_view)
+        
+        # Shortcuts for Copy/Paste
+        from PySide6.QtGui import QKeySequence, QAction, QShortcut
+        self.copy_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self.table_view)
+        self.copy_shortcut.activated.connect(self.copy_selection)
+        
+        self.paste_shortcut = QShortcut(QKeySequence.StandardKey.Paste, self.table_view)
+        self.paste_shortcut.activated.connect(self.paste_selection)
 
         self.setLayout(layout)
         
@@ -89,6 +102,190 @@ class DataPanel(QWidget):
         
         # Keep original data for reset
         self._original_df = None
+
+    def on_context_menu(self, pos):
+        if self.dm.df is None: return
+        
+        index = self.table_view.indexAt(pos)
+        if not index.isValid(): return
+        
+        col_idx = index.column()
+        col_name = self.dm.df.columns[col_idx]
+        
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu(self)
+        menu.setStyleSheet("QMenu { background-color: white; border: 1px solid #ccc; } QMenu::item { padding: 5px 20px; } QMenu::item:selected { background-color: #007bff; color: white; }")
+        
+        # Header Info
+        action_header = menu.addAction(f"Column: {col_name}")
+        action_header.setEnabled(False)
+        menu.addSeparator()
+        
+        # Actions
+        action_rename = menu.addAction("Rename Column...")
+        
+        # Excel-like Actions
+        action_copy = menu.addAction("Copy")
+        action_paste = menu.addAction("Paste")
+        menu.addSeparator()
+
+        # Type Conversion Submenu
+        type_menu = menu.addMenu("Change Type")
+        action_to_numeric = type_menu.addAction("To Numeric")
+        action_to_string = type_menu.addAction("To String")
+        action_to_datetime = type_menu.addAction("To DateTime")
+        action_to_cat = type_menu.addAction("To Categorical")
+        
+        menu.addSeparator()
+        action_drop_nan = menu.addAction("Drop Rows with NaN (This Column)")
+        action_drop_col = menu.addAction("Drop Column")
+        
+        # Execute
+        action = menu.exec(self.table_view.viewport().mapToGlobal(pos))
+        
+        if action == action_rename:
+            self._rename_column(col_name)
+        elif action == action_copy:
+            self.copy_selection()
+        elif action == action_paste:
+            self.paste_selection()
+        elif action == action_to_numeric:
+            self._change_type(col_name, 'numeric')
+        elif action == action_to_string:
+            self._change_type(col_name, 'string')
+        elif action == action_to_datetime:
+            self._change_type(col_name, 'datetime')
+        elif action == action_to_cat:
+             self._change_type(col_name, 'category')
+        elif action == action_drop_nan:
+            self._drop_nan(col_name)
+        elif action == action_drop_col:
+            self._drop_column(col_name)
+
+    def copy_selection(self):
+        selection = self.table_view.selectionModel()
+        if not selection.hasSelection(): return
+        
+        indexes = selection.selectedIndexes()
+        if not indexes: return
+        
+        # Sort to ensure order
+        indexes.sort(key=lambda x: (x.row(), x.column()))
+        
+        # Determine bounds
+        rows = sorted(list(set(index.row() for index in indexes)))
+        cols = sorted(list(set(index.column() for index in indexes)))
+        
+        # Construct TSV string
+        df = self.dm.df
+        text = ""
+        for r in rows:
+            row_data = []
+            for c in cols:
+                try:
+                    val = str(df.iloc[r, c])
+                    row_data.append(val)
+                except:
+                    row_data.append("")
+            text += "\t".join(row_data) + "\n"
+            
+        from PySide6.QtWidgets import QApplication
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
+
+    def paste_selection(self):
+        if self.dm.df is None: return
+        
+        from PySide6.QtWidgets import QApplication
+        clipboard = QApplication.clipboard()
+        text = clipboard.text()
+        if not text: return
+        
+        # Parse clipboard (assume TSV from Excel/Statelix)
+        rows_data = [row.split('\t') for row in text.splitlines()]
+        if not rows_data: return
+
+        # Get top-left target
+        selection = self.table_view.selectionModel()
+        if selection.hasSelection():
+            indexes = selection.selectedIndexes()
+            start_row = min(index.row() for index in indexes)
+            start_col = min(index.column() for index in indexes)
+        else:
+            start_row = 0
+            start_col = 0
+            
+        try:
+            df = self.dm.df # Modify in place if model allows, generally better to copy triggers
+            # We must use model.setData to emit signals or reset whole model.
+            # Using model directly for bulk updates is faster but needs refresh.
+            
+            # Simple approach: Loop set data in Model
+            model = self.model
+            
+            for i, row_vals in enumerate(rows_data):
+                r = start_row + i
+                if r >= df.shape[0]: break # Don't expand rows yet
+                
+                for j, val in enumerate(row_vals):
+                   c = start_col + j
+                   if c >= df.shape[1]: break
+                   
+                   idx = model.index(r, c)
+                   model.setData(idx, val, Qt.ItemDataRole.EditRole)
+                   
+            # Determine if we should emit layoutChanged for bulk?
+            # Since we used setData, it emitted dataChanged per cell.
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Paste Error", f"{e}")
+
+    def _rename_column(self, old_name):
+        new_name, ok = QInputDialog.getText(self, "Rename Column", "New Name:", text=old_name)
+        if ok and new_name and new_name != old_name:
+            try:
+                df = self.dm.df.copy()
+                df = df.rename(columns={old_name: new_name})
+                self._set_internal_data(df, "Renamed Column")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", str(e))
+
+    def _change_type(self, col, target_type):
+        try:
+            df = self.dm.df.copy()
+            if target_type == 'numeric':
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            elif target_type == 'string':
+                df[col] = df[col].astype(str)
+            elif target_type == 'datetime':
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+            elif target_type == 'category':
+                df[col] = df[col].astype('category')
+            
+            self._set_internal_data(df, f"Converted {col} to {target_type}")
+            QMessageBox.information(self, "Success", f"Converted '{col}' to {target_type}.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Conversion failed:\n{e}")
+
+    def _drop_nan(self, col):
+        try:
+            df = self.dm.df.copy()
+            initial_len = len(df)
+            df = df.dropna(subset=[col])
+            dropped = initial_len - len(df)
+            self._set_internal_data(df, f"Dropped NaN from {col}")
+            QMessageBox.information(self, "Success", f"Dropped {dropped} rows.")
+        except Exception as e:
+             QMessageBox.critical(self, "Error", str(e))
+
+    def _drop_column(self, col):
+        res = QMessageBox.question(self, "Confirm", f"Delete column '{col}'?", QMessageBox.Yes | QMessageBox.No)
+        if res == QMessageBox.Yes:
+            try:
+                df = self.dm.df.drop(columns=[col])
+                self._set_internal_data(df, f"Dropped {col}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", str(e))
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():

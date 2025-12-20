@@ -1,6 +1,5 @@
 
-from .adapters import BaseAdapter, LinearAdapter, BayesAdapter, CausalAdapter, DiscreteAdapter, SEMAdapter
-from statelix.causal.core import BaseCausalModel
+from .adapters import BaseAdapter, LinearAdapter, BayesAdapter, CausalAdapter, DiscreteAdapter, SEMAdapter, BaseCausalModel
 from statelix_py.models.discrete import OrderedModel, MultinomialLogit
 from statelix_py.models.sem import PathAnalysis, MediationAnalysis
 
@@ -24,7 +23,7 @@ class Storyteller:
         self.feature_names = feature_names
 
     def explain(self):
-        """Generates a narrative summary of the model."""
+        """Generates a scaffolding summary of the model (FACTS + HINTS)."""
         coefs = self.adapter.get_coefficients()
         
         # Determine Narrative Style
@@ -33,32 +32,32 @@ class Storyteller:
         is_sem = isinstance(self.adapter, SEMAdapter)
         
         lines = []
-        lines.append("### Analysis Narrative")
+        lines.append("### 1. Analysis Facts (What the Data Says)")
+        lines.append("_These are purely statistical results generated from your data._")
+        lines.append("")
         
         # --- METRICS SECTION ---
         metrics = self.adapter.get_metrics()
         
         if is_sem:
             if 'proportion_mediated' in metrics:
-                lines.append(f"**Mediation Analysis Result:**")
-                lines.append(f"The analysis reveals that {metrics['proportion_mediated']:.1%} of the total effect is mediated (indirect).")
+                lines.append(f"- **Mediation Ratio:** {metrics['proportion_mediated']:.1%} of the effect passes through the mediator.")
                 p_val = metrics.get('p_value_indirect', 1.0)
-                sig = "statistically significant" if p_val < 0.05 else "not significant"
-                lines.append(f"The indirect effect is **{sig}** (p={p_val:.3f}).")
-                lines.append("")
+                sig = "statistically significant" if p_val < 0.05 else "not statistically significant"
+                lines.append(f"- **Significance:** The indirect pathway is {sig} (p={p_val:.3f}).")
         elif is_discrete:
             if 'pseudo_r2' in metrics:
-                lines.append(f"Model Fit: Pseudo R-Squared is {metrics['pseudo_r2']:.3f}.")
-            lines.append("")
+                lines.append(f"- **Model Fit:** Pseudo R-Squared is {metrics['pseudo_r2']:.3f}.")
         else:
             if 'r2' in metrics:
-                lines.append(f"The model explains {metrics['r2']:.1%} of the variance in the target variable.")
+                lines.append(f"- **Explained Variance:** The model explains {metrics['r2']:.1%} of the variation in the target.")
             if 'effect' in metrics:
-                  lines.append(f"Estimated Causal Effect: {metrics['effect']:.4f}")
-            lines.append("")
-
-        # --- COEFFICIENTS SECTION ---
-        lines.append("**Key Drivers & Relationships:**")
+                lines.append(f"- **Estimated Parameter:** {metrics['effect']:.4f}")
+        
+        lines.append("")
+        
+        # --- COEFFICIENTS SECTION (FACTS) ---
+        lines.append("**Observed Relationships:**")
         
         try:
             sorted_coefs = sorted(coefs.items(), key=lambda x: abs(x[1]) if isinstance(x[1], (int, float)) else 0, reverse=True)
@@ -68,69 +67,61 @@ class Storyteller:
         for name, val in sorted_coefs:
             if isinstance(val, (int, float)) and abs(val) < 1e-4: continue
             
-            # Name Resolution Logic
+            # Name Logic
             display_name = str(name)
-            
-            # Case 1: Keys are indices (e.g. Scikit-learn/Linear)
             if isinstance(name, int) and self.feature_names and name < len(self.feature_names):
                 display_name = self.feature_names[name]
             
-            # Case 2: Keys are already names (e.g. Statsmodels/Discrete)
-            # If feature_names provided, we might want to map case-insensitively or just trust the model key.
-            # Usually statsmodels returns column names directly.
-            pass  
-
-            direction = "positive" if isinstance(val, (int, float)) and val > 0 else "negative"
+            direction = "positive (+)" if isinstance(val, (int, float)) and val > 0 else "negative (-)"
             val_fmt = f"{val:.4f}" if isinstance(val, (int, float)) else str(val)
 
-            # --- SEM Narrative ---
+            # --- SEM Facts ---
             if is_sem:
                 if "->" in str(name):
-                    lines.append(f"- **Path {display_name}**: Coefficient is {val_fmt}.")
+                    lines.append(f"- **Path {display_name}**: Coefficient = {val_fmt}.")
                 else:
-                    if name == "Indirect Effect":
-                         lines.append(f"- **Indirect Effect** (Mechanism): {val_fmt}. This represents the pathway through the mediator.")
-                    elif name == "Direct Effect":
-                         lines.append(f"- **Direct Effect**: {val_fmt}. The effect remaining after accounting for the mediator.")
-                    elif name == "Total Effect":
-                         lines.append(f"- **Total Effect** (Overall Impact): {val_fmt}. The overall influence of X on Y.")
+                    lines.append(f"- **{name}**: Coefficient = {val_fmt}.")
 
-            # --- Discrete Narrative ---
+            # --- Discrete Facts ---
             elif is_discrete:
-                 # Check if this is a cut point
-                 if "/" in display_name and "x" not in display_name: # Simple heuristic for cut-points "0/1"
-                      continue # Skip display of cut points in main driver list
-
-                 # Match names from feature_names just in case user provided them
-                 if self.feature_names:
+                 if "/" in display_name and "x" not in display_name: continue
+                 if self.feature_names: # Match names
                      for f in self.feature_names:
                          if f.lower() == display_name.lower():
-                             display_name = f
-                             break
-                             
-                 lines.append(f"- **{display_name}**: {direction.capitalize()} influence (coef = {val_fmt}).")
-                 if direction == "positive":
-                     lines.append(f"  Higher values of this feature increase the likelihood of higher categories.")
-                 else:
-                     lines.append(f"  Higher values decrease the likelihood of higher categories.")
+                             display_name = f; break
+                 lines.append(f"- **{display_name}**: {direction} association (coef = {val_fmt}).")
 
-            # --- Causal Narrative ---
-            elif is_causal:
-                lines.append(f"- **{display_name}**: Has a {direction} **causal impact** (effect = {val_fmt}).")
-                lines.append(f"  A 1-unit increase causes a {val_fmt} change in the outcome.")
-
-            # --- Standard Linear Narrative ---
+            # --- Linear/Causal Facts (Unified) ---
             else:
-                lines.append(f"- **{display_name}**: Has a {direction} association (beta = {val_fmt}).")
+                # Intentionally avoiding "Causal Impact" wording even for CausalAdapter
+                # We state the "Estimated Effect" which is a statistical fact given the model.
+                lines.append(f"- **{display_name}**: {direction} association (coef = {val_fmt}).")
 
-        # --- CAVEATS ---
+        lines.append("")
+        lines.append("### 2. Interpretation Hints (Possibilities)")
+        lines.append("_These are possible ways to interpret the facts. YOU must decide which are valid._")
+        lines.append("")
+        
+        lines.append("> [!TIP]")
+        lines.append("> **Positive Association (+):** As X increases, Y tends to increase.")
+        lines.append("> **Negative Association (-):** As X increases, Y tends to decrease.")
+        lines.append("> **Magnitude:** A coefficient of 0.5 means a 1-unit change in X is associated with a 0.5 change in Y.")
+        
         if is_causal:
+             lines.append("")
+             lines.append("> [!WARNING]")
+             lines.append("> **Causal Interpretation Risks:**")
+             lines.append("> This model explicitly *attempts* to isolate a causal effect, but it relies on these assumptions:")
              assumptions = self.adapter.get_assumptions()
              if assumptions:
-                  lines.append("")
-                  lines.append("### Causal Assumptions")
-                  lines.append("> [!WARNING]")
-                  for asm in assumptions:
-                       lines.append(f"> - {asm}")
-
+                 for asm in assumptions:
+                     lines.append(f"> - {asm}")
+             else:
+                 lines.append("> - No unobserved confounders (Selection on Observables)")
+             lines.append("> **If these assumptions fail, the result is just a correlation.**")
+        
+        lines.append("")
+        lines.append("### 3. Conclusion")
+        lines.append("*(This section is left blank for you. Based on the facts and hints above, what is your judgment?)*")
+        
         return "\n".join(lines)

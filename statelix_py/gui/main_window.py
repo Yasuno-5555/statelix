@@ -58,28 +58,9 @@ class AnalysisWorker(QThread):
                     X_aug = sm.add_constant(X)
                     ols = sm.OLS(Y, X_aug).fit()
                     
-                    # Generate Rich Narrative
-                    coef = ols.params[1] if len(ols.params) > 1 else 0
-                    pval = ols.pvalues[1] if len(ols.pvalues) > 1 else 1
-                    r2 = ols.rsquared
-                    
-                    sig_indicator = "🟢 Significant" if pval < 0.05 else "🟡 Not Significant"
-                    direction = "positively" if coef > 0 else "negatively"
-                    
-                    narrative = f"## Driver Analysis: {x_col} → {y_col}\n\n"
-                    narrative += f"**Question**: What drives **{y_col}**?\n\n"
-                    narrative += "### Key Finding\n"
-                    narrative += f"> For every 1-unit increase in **{x_col}**, **{y_col}** is expected to change by **{coef:+.4f}** units.\n\n"
-                    
-                    narrative += "### Statistical Evidence\n"
-                    narrative += f"- **Coefficient**: {coef:.4f}\n"
-                    narrative += f"- **P-Value**: {pval:.4f} ({sig_indicator})\n"
-                    narrative += f"- **Model Fit (R²)**: {r2:.2%}\n\n"
-                    
-                    if pval < 0.05:
-                        narrative += f"> ✅ There is strong statistical evidence that **{x_col}** {direction} affects **{y_col}**.\n"
-                    else:
-                        narrative += f"> ⚠️ The relationship between **{x_col}** and **{y_col}** is not statistically significant at the 5% level. Consider adding more data or exploring other variables.\n"
+                    # Use Student-Mode Storyteller
+                    story = Storyteller(ols, feature_names=["Intercept", x_col])
+                    narrative = story.explain()
                     
                     # Visual: Scatter Plot for Drivers
                     result_data['viz_type'] = 'Drivers'
@@ -183,11 +164,20 @@ class AnalysisWorker(QThread):
                      mean_diff = np.mean(diff)
                      total_diff = np.sum(diff)
                      
-                     # Narrative Generation
-                     narrative = "### What-If Simulation Results\n"
-                     narrative += f"**Scenario**: If **{x_col}** is {change_desc}...\n\n"
-                     narrative += f"> The outcome **{y_col}** is expected to change by **{mean_diff:+.2f}** (on average).\n"
-                     narrative += f"> **Total Impact**: {total_diff:+.2f} over the entire dataset.\n\n"
+                     # Narrative Generation (Student Mode)
+                     narrative = "### 1. What-If Simulation Facts\n"
+                     narrative += f"_Based on current data patterns, here is a simulated scenario._\n\n"
+                     narrative += f"**Scenario**: If **{x_col}** {change_desc}...\n"
+                     narrative += f"- **Estimated Change**: The outcome **{y_col}** moves by **{mean_diff:+.2f}** (average).\n"
+                     narrative += f"- **Aggregate Shift**: {total_diff:+.2f} total across all data points.\n\n"
+                     
+                     narrative += "### 2. Interpretation Hints\n"
+                     narrative += "> [!TIP]\n"
+                     narrative += "> **Counterfactuals:** This is a prediction of a world that doesn't exist.\n"
+                     narrative += "> It assumes the relationship between X and Y remains exactly the same even after the change (No Causal Stability guaranteed).\n\n"
+                     
+                     narrative += "### 3. Conclusion\n"
+                     narrative += "*(Based on this simulation, would this policy be effective? Write your judgment here.)*"
                      
                      # Visual Data (Before vs After distribution)
                      result_data['viz_type'] = 'WhatIf'
@@ -276,10 +266,52 @@ class AnalysisWorker(QThread):
                 
             self.finished.emit(result_data)
 
+            self.finished.emit(result_data)
+                
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self.error.emit(str(e))
+            # === PEDAGOGICAL ERROR WRAPPER ===
+            error_msg = str(e)
+            
+            # 1. Singular Matrix / LinAlgError
+            if "Singular matrix" in error_msg or "LinAlgError" in error_msg:
+                friendly_msg = (
+                    "<h3>🚫 Analysis Failed: Perfect Collinearity</h3>"
+                    "<p><b>What happened:</b> The model could not distinguish between some of your variables because they are too similar (or identical).</p>"
+                    "<p><b>Why this happens:</b> Usually, this means one variable is a perfect copy or linear combination of another (e.g., 'Age' and 'Age in Months').</p>"
+                    "<p><b>How to fix it:</b>"
+                    "<ul>"
+                    "<li>Check your variables (X). Do any imply the others?</li>"
+                    "<li>Try removing one variable at a time.</li>"
+                    "<li>If using dummies, ensure you aren't including all levels (dummy trap).</li>"
+                    "</ul></p>"
+                )
+                self.error.emit(friendly_msg)
+            
+            # 2. ValueError (Shape mismatch etc)
+            elif "ValueError" in str(type(e)):
+                 friendly_msg = (
+                    f"<h3>⚠️ Analysis Error: Data Mismatch</h3>"
+                    f"<p><b>What happened:</b> The internal calculator rejected the data format.</p>"
+                    f"<p><b>Technical details:</b> {error_msg}</p>"
+                    "<p><b>Common causes:</b>"
+                    "<ul>"
+                    "<li>Missing values (NaNs) in the selected columns.</li>"
+                    "<li>Selecting text columns for a numerical model.</li>"
+                    "</ul></p>"
+                )
+                 self.error.emit(friendly_msg)
+
+            # 3. Generic Catch-All
+            else:
+                friendly_msg = (
+                    f"<h3>❌ Unexpected Error</h3>"
+                    f"<p><b>What happened:</b> An unexpected error occurred.</p>"
+                    f"<p><b>Error Details:</b> {error_msg}</p>"
+                    "<p><b>Suggestion:</b> Check your data formatting or try a simplified model.</p>"
+                )
+                import traceback
+                traceback.print_exc()
+                self.error.emit(friendly_msg)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -458,6 +490,25 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "No data loaded. Use DataPanel in Expert Mode to load data first.")
             return
 
+        # --- Validate Params ---
+        # "target" is strictly required for most models (except maybe generic EDA/Plugins)
+        # "features" might be optional for some, but usually needed.
+        if not params.get('target') and "Inquiry" not in params.get('mode', 'Classic'):
+             # Allow some models like Unsupervised to skip target?
+             # For OLS/IV, target is mandatory.
+             # K-Means uses Features only.
+             model_name = params.get('model', '')
+             if "K-Means" not in model_name and "HNSW" not in model_name: 
+                 QMessageBox.warning(self, "Missing Input", "Please select a Target (Y) variable.")
+                 return
+        
+        if not params.get('features') and "Inquiry" not in params.get('mode', 'Classic'):
+             # Check models that require features
+             model_name = params.get('model', '')
+             if "OLS" in model_name or "IV" in model_name or "GLM" in model_name:
+                 QMessageBox.warning(self, "Missing Input", "Please select at least one Feature (X) variable.")
+                 return
+
         self.statusBar().showMessage("Running Analysis...")
         
         # Start Worker
@@ -608,7 +659,14 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def on_analysis_error(self, msg):
         self.statusBar().showMessage("Error")
-        QMessageBox.critical(self, "Analysis Failed", msg)
+        # Use a custom box for rich text support if needed, but standard usually supports HTML
+        # if the string starts with tags.
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Critical)
+        box.setWindowTitle("Analysis Feedback")
+        box.setText(msg)
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.exec()
 
     def reload_plugins(self):
         self.loaded_plugins = self.plugin_loader.scan_and_load()
