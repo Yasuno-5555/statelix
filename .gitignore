@@ -13,8 +13,10 @@ __pycache__/
 *.obj
 
 # Logs and Temps
-*.txt
 *.log
+# Text files (except requirements.txt)
+*.txt
+!requirements.txt
 .pytest_cache/
 .coverage
 htmlcov/

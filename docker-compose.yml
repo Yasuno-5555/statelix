@@ -1,0 +1,28 @@
+# =============================================================================
+# Statelix Docker Compose
+# =============================================================================
+# 使い方:
+#   ビルド:    docker-compose build
+#   テスト:    docker-compose run --rm statelix
+#   開発シェル: docker-compose run --rm statelix bash
+# =============================================================================
+
+services:
+  statelix:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: statelix-dev
+
+    # 開発時にソースコードをマウント（変更が即反映）
+    volumes:
+      - .:/statelix
+
+    # 環境変数
+    environment:
+      - PYTHONPATH=/statelix
+      - STATELIX_NO_CUDA=1
+
+    # インタラクティブモード用
+    stdin_open: true
+    tty: true

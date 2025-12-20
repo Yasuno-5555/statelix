@@ -90,18 +90,45 @@ print(story.explain())
 
 ## 🛠 Installation
 
-### Standard (CPU + Optional GPU)
-Requires **Visual Studio 2022** (C++) and **Python 3.10+**.
+### 🐳 Docker (Recommended - 推奨)
+
+**Dockerを使えば、どの環境でも同じように動作します。**
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/your-repo/statelix.git
+cd statelix
+
+# 2. Build the Docker image
+docker-compose build
+
+# 3. Run tests
+docker-compose run --rm statelix
+
+# 4. Open a development shell
+docker-compose run --rm statelix bash
+
+# Inside the container, you can run:
+python -c "import statelix; print('Statelix is working!')"
+python benchmark/run_benchmarks.py
+```
+
+### Manual Installation (手動インストール)
+
+Requires **C++ compiler (GCC/Clang/MSVC)**, **CMake**, and **Python 3.10+**.
+
+```bash
+# 1. Install Python dependencies
+pip install -r requirements.txt
+
+# 2. Build and install Statelix
+pip install -e .
+
+# 3. Verify installation
+python -c "import statelix; print('OK')"
+```
+
 If `nvcc` (CUDA Toolkit) is found in PATH, GPU support is built automatically.
-
-```bash
-pip install .
-```
-
-To verify installation and API health:
-```bash
-python verify_api_update.py
-```
 
 ---
 

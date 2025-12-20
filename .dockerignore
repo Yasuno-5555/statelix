@@ -5,4 +5,8 @@ __pycache__/
 .git/
 .vscode/
 venv/
+venv_bench/
 *.egg-info/
+.pytest_cache/
+*.log
+temp_test_data/

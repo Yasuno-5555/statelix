@@ -1,29 +1,69 @@
+# =============================================================================
+# Statelix Docker Development Environment
+# =============================================================================
+# このDockerfileは、Statelixのビルド・テスト環境を再現可能にします。
+# どのPCでも同じ環境でビルド・テストできます。
+# =============================================================================
+
 FROM python:3.10-slim-bullseye
 
-# 1. System Dependencies
-RUN apt-get update && apt-get install -y \
+LABEL maintainer="Statelix Team"
+LABEL description="Statelix - High-performance Statistical Analysis"
+
+# =============================================================================
+# 1. システム依存関係のインストール
+# =============================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # C++ビルドツール
     build-essential \
     cmake \
-    git \
+    g++ \
+    # OpenMP (並列処理)
     libomp-dev \
+    # Git (バージョン管理)
+    git \
+    # Qt/PySide6 依存関係 (GUI用)
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libxkbcommon0 \
+    libdbus-1-3 \
+    libxcb-xinerama0 \
+    libxcb-cursor0 \
+    libegl1 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-randr0 \
+    libxcb-render-util0 \
+    libxcb-shape0 \
+    # クリーンアップ
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Python Dependencies
-RUN pip install --no-cache-dir numpy pandas pybind11 scipy scikit-learn
+# =============================================================================
+# 2. Python依存関係のインストール
+# =============================================================================
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r /tmp/requirements.txt
 
+# =============================================================================
+# 3. 作業ディレクトリの設定
+# =============================================================================
 WORKDIR /statelix
 
-# 3. Copy Source Code (Replaces git clone for local dev)
-# This captures all local changes without needing a remote repo
+# =============================================================================
+# 4. ソースコードのコピー
+# =============================================================================
 COPY . /statelix
 
-# 4. Build C++ Core
-RUN rm -rf build && mkdir build && cd build \
-    && cmake .. -DCMAKE_BUILD_TYPE=Release \
-    && cmake --build . --config Release --parallel 4
+# =============================================================================
+# 5. C++拡張のビルドとインストール
+# =============================================================================
+ENV STATELIX_NO_CUDA=1
+RUN pip install -e .
 
-# 5. Install Extension (Manual placement for dev)
-RUN find build -name "*.so" -exec cp {} statelix_py/core/ \;
-
-# 6. Run Benchmarks (Run at container start)
-CMD ["python3", "run_benchmarks.py"]
+# =============================================================================
+# 6. デフォルトコマンド
+# =============================================================================
+# テストを実行（GUIなし）
+CMD ["python", "-m", "pytest", "tests/", "-v", "--ignore=tests/gui"]
