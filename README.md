@@ -3,7 +3,9 @@
 
 > **"Statelix is not a predictor. It is an explainer."**
 
-**Statelix** is a next-generation platform designed to go beyond simple accuracy metrics. It unifies **Econometrics**, **Causal Inference**, and **Bayesian Statistics** into a single environment dedicated to answering the question: **"Why?"**
+**Statelix** is a next-generation platform designed to go beyond simple accuracy metrics. It unifies **Econometrics**, **Causal Inference**, and **Bayesian Statistics** into a single environment dedicated to answering the question: 
+This is largely AI-generated code. I cannot fully verify the results myself. Use at your own risk and please validate before citing.
+**"Why?"**
 
 Built on a hybrid **C++ (Eigen) / Python** architecture, it offers performance that outperforms standard libraries while maintaining strict numerical stability.
 
