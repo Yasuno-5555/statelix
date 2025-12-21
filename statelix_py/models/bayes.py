@@ -148,3 +148,27 @@ class BayesianLogisticRegression:
     def coef_stds_(self):
         if self.samples_ is None: return None
         return np.std(self.samples_, axis=0)
+    
+    # Aliases for sklearn-like API
+    @property
+    def coef_(self):
+        """sklearn-compatible alias for coef_means_"""
+        return self.coef_means_
+    
+    @property
+    def intercept_(self):
+        """Placeholder for sklearn compatibility (intercept is part of coef_ if X has constant)"""
+        return 0.0  # Not separately estimated in current implementation
+    
+    @property
+    def summary(self):
+        """Return summary statistics of posterior distribution."""
+        if self.samples_ is None:
+            return None
+        return {
+            "coef_mean": self.coef_means_,
+            "coef_std": self.coef_stds_,
+            "n_samples": self.samples_.shape[0],
+            "n_features": self.samples_.shape[1]
+        }
+

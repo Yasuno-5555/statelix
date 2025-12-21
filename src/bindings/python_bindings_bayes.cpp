@@ -90,7 +90,10 @@ PYBIND11_MODULE(bayes, m) {
           "prior_sigma_scale",
           &statelix::bayes::BayesianLinearRegression::prior_sigma_scale)
       .def("fit", &statelix::bayes::BayesianLinearRegression::fit_map,
-           "Fit MAP estimate")
+           "Fit MAP estimate (Legacy GD)")
+      .def("fit_autodiff",
+           &statelix::bayes::BayesianLinearRegression::fit_map_autodiff,
+           "Fit MAP estimate using Zigen Autodiff")
       .def("sample", &statelix::bayes::BayesianLinearRegression::sample,
            py::arg("n_samples") = 1000, py::arg("warmup") = 500,
            "Run HMC sampling")

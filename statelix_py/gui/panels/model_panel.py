@@ -1,136 +1,138 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QComboBox, QHBoxLayout, 
     QPushButton, QFormLayout, QListWidget, QSpinBox, QDoubleSpinBox, QGroupBox,
-    QScrollArea
+    QScrollArea, QLineEdit, QCompleter, QFrame
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt, QSortFilterProxyModel, QStringListModel
+
+from statelix_py.gui.i18n import t
 
 class ModelPanel(QWidget):
     run_requested = Signal(dict)
 
     def __init__(self):
         super().__init__()
+        self._all_models = [
+            # --- Linear Models ---
+            "📈 Linear: OLS (最小二乗法)", 
+            "📈 Linear: Ridge Regression",
+            "📈 Linear: Lasso Regression",
+            "📈 Linear: Elastic Net",
+            "📈 Linear: Mixed Effects (混合効果)",
+            # --- GLM ---
+            "📊 GLM: Logistic (二項)",
+            "📊 GLM: Poisson (カウント)",
+            "📊 GLM: Gamma (正値連続)",
+            "📊 GLM: Negative Binomial (過分散)",
+            "📊 GLM: Probit",
+            "📊 GLM: Quantile Regression (分位点)",
+            # --- Discrete Choice ---
+            "🎯 Choice: Ordered Model (順序ロジット)",
+            "🎯 Choice: Multinomial Logit (多項ロジット)",
+            # --- Time Series ---
+            "📉 TS: AR Model (自己回帰)",
+            "📉 TS: VAR (ベクトル自己回帰)",
+            "📉 TS: GARCH (ボラティリティ)",
+            "📉 TS: Kalman Filter (状態空間)",
+            "📉 TS: Change Point Detection",
+            "📉 TS: DTW (動的時間伸縮)",
+            "📉 TS: Cointegration (共和分)",
+            # --- Panel Data ---
+            "📋 Panel: Fixed Effects",
+            "📋 Panel: Random Effects",
+            "📋 Panel: First Difference",
+            # --- Causal Inference ---
+            "🔬 Causal: IV (2SLS)",
+            "🔬 Causal: Diff-in-Diff",
+            "🔬 Causal: PSM (傾向スコア)",
+            "🔬 Causal: IPW (逆確率重み付け)",
+            "🔬 Causal: Doubly Robust (AIPW)",
+            "🔬 Causal: RDD (回帰不連続)",
+            "🔬 Causal: GMM",
+            "🔬 Causal: Synthetic Control",
+            # --- SEM ---
+            "🔗 SEM: Path Analysis (パス解析)",
+            "🔗 SEM: Mediation Analysis (媒介分析)",
+            # --- Survival ---
+            "⏱️ Survival: Kaplan-Meier (生存曲線)",
+            "⏱️ Survival: Log-Rank Test (検定)",
+            "⏱️ Survival: Cox Proportional Hazards",
+            # --- Spatial ---
+            "🗺️ Spatial: Spatial Regression",
+            # --- Bayesian ---
+            "🎲 Bayes: MAP (最大事後)",
+            "🎲 Bayes: Logistic (HMC)",
+            "🎲 Bayes: VI (変分推論)",
+            "🎲 Bayes: MCMC (Metropolis)",
+            # --- Machine Learning ---
+            "🤖 ML: K-Means Clustering",
+            "🤖 ML: GBDT (勾配ブースティング)",
+            "🤖 ML: Factorization Machines",
+            # --- Graph Analysis ---
+            "🕸️ Graph: Louvain Communities",
+            "🕸️ Graph: PageRank",
+            # --- Search ---
+            "🔎 Search: Build HNSW Index",
+            # --- Signal Processing ---
+            "📡 Signal: Wavelet Transform",
+            # --- Statistics & Tests ---
+            "📐 Stats: ANOVA One-Way (一元配置)",
+            "📐 Stats: ANOVA Two-Way (二元配置)",
+            "📐 Stats: ANCOVA (共分散分析)",
+            "📐 Stats: TukeyHSD (多重比較)",
+            "📐 Stats: T-Test (t検定)",
+            "📐 Stats: Chi-Squared Test (カイ二乗)",
+            "📐 Stats: Mann-Whitney U (順位和)",
+            "📐 Stats: Kruskal-Wallis (順位分散)",
+            "📐 Stats: Wilcoxon Test (符号順位)",
+            # --- Diagnostics ---
+            "🔧 Diag: VIF (多重共線性)",
+            "🔧 Diag: Durbin-Watson (自己相関)",
+            "🔧 Diag: Breusch-Pagan (分散不均一)",
+            "🔧 Diag: White Test (分散不均一)",
+            "🔧 Diag: Cook's Distance (外れ値)",
+        ]
+        self.wasm_plugin_models = []
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout()
+        layout.setSpacing(8)
         
-        title = QLabel("モデルパネル")
-        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        # Title with icon
+        title = QLabel(t("panel.model"))
+        title.setStyleSheet("font-weight: bold; font-size: 14px; color: #007acc;")
         layout.addWidget(title)
 
-        # 1. Model Selection
-        model_layout = QHBoxLayout()
-        model_layout.addWidget(QLabel("モデル:"))
+        # 1. Model Selection Group
+        model_frame = QFrame()
+        model_frame.setStyleSheet("""
+            QFrame#ModelSelectionFrame {
+                background-color: #252526;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                padding: 8px;
+            }
+        """)
+        model_frame.setObjectName("ModelSelectionFrame")
+        model_layout = QVBoxLayout(model_frame)
+        
+        # Search Box
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText(t("search.model"))
+        self.search_edit.textChanged.connect(self._on_search_text_changed)
+        model_layout.addWidget(self.search_edit)
+        
+        # Model Combo
         self.model_combo = QComboBox()
-        self.model_combo.addItems([
-            # --- Linear Models ---
-            "--- Linear Models ---",
-            "OLS (最小二乗法)", 
-            "Ridge Regression",
-            "Lasso Regression",
-            "Elastic Net",
-            "Mixed Effects (混合効果)",
-            # --- GLM ---
-            "--- GLM (一般化線形モデル) ---",
-            "GLM: Logistic (二項)",
-            "GLM: Poisson (カウント)",
-            "GLM: Gamma (正値連続)",
-            "GLM: Negative Binomial (過分散)",
-            "GLM: Probit",
-            "Quantile Regression (分位点)",
-            # --- Discrete Choice ---
-            "--- Discrete Choice (離散選択) ---",
-            "Ordered Model (順序ロジット)",
-            "Multinomial Logit (多項ロジット)",
-            # --- Time Series ---
-            "--- Time Series ---",
-            "AR Model (自己回帰)",
-            "VAR (ベクトル自己回帰)",
-            "GARCH (ボラティリティ)",
-            "Kalman Filter (状態空間)",
-            "Change Point Detection",
-            "DTW (動的時間伸縮)",
-            "Cointegration (共和分)",
-            # --- Panel Data ---
-            "--- Panel Data ---",
-            "Panel: Fixed Effects",
-            "Panel: Random Effects",
-            "Panel: First Difference",
-            # --- Causal Inference ---
-            "--- Causal Inference ---",
-            "Causal: IV (2SLS)",
-            "Causal: Diff-in-Diff",
-            "Causal: PSM (傾向スコア)",
-            "Causal: IPW (逆確率重み付け)",
-            "Causal: Doubly Robust (AIPW)",
-            "Causal: RDD (回帰不連続)",
-            "Causal: GMM",
-            "Causal: Synthetic Control",
-            # --- Structural Equation ---
-            "--- SEM (構造方程式) ---",
-            "Path Analysis (パス解析)",
-            "Mediation Analysis (媒介分析)",
-            # --- Survival ---
-            "--- Survival Analysis ---",
-            "Kaplan-Meier (生存曲線)",
-            "Log-Rank Test (検定)",
-            "Cox Proportional Hazards",
-            # --- Spatial ---
-            "--- Spatial (空間統計) ---",
-            "Spatial Regression",
-            # --- Bayesian ---
-            "--- Bayesian ---",
-            "Bayesian: MAP (最大事後)",
-            "Bayesian: Logistic (HMC)",
-            "Bayesian: VI (変分推論)",
-            "Bayesian: MCMC (Metropolis)",
-            # --- Machine Learning ---
-            "--- Machine Learning ---",
-            "ML: K-Means Clustering",
-            "ML: GBDT (勾配ブースティング)",
-            "ML: Factorization Machines",
-            # --- Graph Analysis ---
-            "--- Graph Analysis ---",
-            "Graph: Louvain Communities",
-            "Graph: PageRank",
-            # --- Search ---
-            "--- Search & Index ---",
-            "Search: Build HNSW Index",
-            # --- Signal Processing ---
-            "--- Signal Processing ---",
-            "Signal: Wavelet Transform",
-            # --- Statistics & Tests ---
-            "--- Statistics (統計検定) ---",
-            "ANOVA: One-Way (一元配置)",
-            "ANOVA: Two-Way (二元配置)",
-            "ANOVA: ANCOVA (共分散分析)",
-            "TukeyHSD (多重比較)",
-            "T-Test (t検定)",
-            "Chi-Squared Test (カイ二乗)",
-            "Mann-Whitney U (順位和)",
-            "Kruskal-Wallis (順位分散)",
-            "Wilcoxon Test (符号順位)",
-            # --- Diagnostics ---
-            "--- Diagnostics (診断) ---",
-            "VIF (多重共線性)",
-            "Durbin-Watson (自己相関)",
-            "Breusch-Pagan (分散不均一)",
-            "White Test (分散不均一)",
-            "Cook's Distance (外れ値)",
-            # --- WASM Plugins (dynamic) ---
-            "--- WASM Plugins ---"
-        ])
-        
-        # Track WASM plugin names for dynamic UI
-        self.wasm_plugin_models = []
-        
+        self.model_combo.addItems(self._all_models)
         self.model_combo.currentIndexChanged.connect(self.on_model_changed)
         model_layout.addWidget(self.model_combo)
-        layout.addLayout(model_layout)
         
-        # 2. Parameters
-        self.param_group = QGroupBox("Hyperparameters")
+        layout.addWidget(model_frame)
+        
+        # 2. Parameters Scroll Area
+        self.param_group = QGroupBox(t("panel.result.summary")) # Hyperparameters
         self.form_layout = QFormLayout()
         
         # --- Params Widgets ---
@@ -202,67 +204,123 @@ class ModelPanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidget(self.param_group)
         scroll.setWidgetResizable(True)
-        # Minimize minimum height so it can shrink
         scroll.setMinimumHeight(150)
-        
+        scroll.setMinimumHeight(150)
         layout.addWidget(scroll)
 
-
-        # 3. Variable Selection
-        var_layout = QHBoxLayout()
+        # 3. Variable Selection (Improved Height)
+        var_frame = QFrame()
+        var_frame.setStyleSheet("""
+            QFrame {
+                background-color: #252526;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                padding: 5px;
+            }
+            QListWidget {
+                border: 1px solid #3e3e42;
+                border-radius: 3px;
+                background-color: #1e1e1e;
+            }
+            QListWidget::item:selected {
+                background-color: #0078d4;
+            }
+        """)
+        var_layout = QHBoxLayout(var_frame)
+        var_layout.setSpacing(10)
         
+        # Target (Y) - Single Selection
         self.l1_layout = QVBoxLayout()
-        self.l1_label = QLabel("Target (Y)")
+        self.l1_label = QLabel(t("label.target"))
+        self.l1_label.setStyleSheet("font-weight: bold; color: #4fc3f7;")
         self.l1_list = QListWidget()
-        self.l1_list.setMaximumHeight(80)
-        self.l1_layout.addWidget(self.l1_label); self.l1_layout.addWidget(self.l1_list)
+        self.l1_list.setMinimumHeight(120)
+        self.l1_list.setMaximumHeight(200)
+        self.l1_layout.addWidget(self.l1_label)
+        self.l1_layout.addWidget(self.l1_list)
         var_layout.addLayout(self.l1_layout)
         
+        # Features (X) - Multi Selection
         self.l2_layout = QVBoxLayout()
-        self.l2_label = QLabel("Features (X)")
+        self.l2_label = QLabel(t("label.features"))
+        self.l2_label.setStyleSheet("font-weight: bold; color: #81c784;")
         self.l2_list = QListWidget()
-        self.l2_list.setMaximumHeight(80)
+        self.l2_list.setMinimumHeight(120)
+        self.l2_list.setMaximumHeight(200)
         self.l2_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
-        self.l2_layout.addWidget(self.l2_label); self.l2_layout.addWidget(self.l2_list)
+        self.l2_layout.addWidget(self.l2_label)
+        self.l2_layout.addWidget(self.l2_list)
         var_layout.addLayout(self.l2_layout)
 
+        # Auxiliary (Z) - Optional
         self.l3_layout = QVBoxLayout()
-        self.l3_label = QLabel("Auxiliary")
+        self.l3_label = QLabel(t("label.auxiliary"))
+        self.l3_label.setStyleSheet("font-weight: bold; color: #ffb74d;")
         self.l3_list = QListWidget()
-        self.l3_list.setMaximumHeight(80)
-        self.l3_layout.addWidget(self.l3_label); self.l3_layout.addWidget(self.l3_list)
+        self.l3_list.setMinimumHeight(120)
+        self.l3_list.setMaximumHeight(200)
+        self.l3_layout.addWidget(self.l3_label)
+        self.l3_layout.addWidget(self.l3_list)
         var_layout.addLayout(self.l3_layout)
         
-        layout.addLayout(var_layout)
+        layout.addWidget(var_frame)
 
         # 4. Actions
         action_layout = QHBoxLayout()
-        self.run_btn = QPushButton("実行")
-        # Style handles via QSS now
-        # self.run_btn.setStyleSheet("background-color: #007bff; color: white; font-weight: bold; padding: 6px;")
+        self.run_btn = QPushButton(t("btn.run"))
         self.run_btn.clicked.connect(self.on_run)
-        
         action_layout.addWidget(self.run_btn)
         
-        # Action: Export Code
-        self.export_btn = QPushButton("コード生成 (Copy)")
+        self.export_btn = QPushButton(t("btn.generate_code"))
         self.export_btn.clicked.connect(self.on_export)
         action_layout.addWidget(self.export_btn)
         
         layout.addLayout(action_layout)
-
         layout.addStretch()
         self.setLayout(layout)
         
+        # Initial model update
         self.on_model_changed(0)
+
+    def _on_search_text_changed(self, text):
+        """Filter items in model_combo based on search text."""
+        self.model_combo.blockSignals(True)
+        current = self.model_combo.currentText()
+        self.model_combo.clear()
+        
+        all_items = self._all_models + self.wasm_plugin_models
+        if not text:
+            self.model_combo.addItems(all_items)
+        else:
+            filtered = [m for m in all_items if text.lower() in m.lower()]
+            if filtered:
+                self.model_combo.addItems(filtered)
+            else:
+                self.model_combo.addItem(f"No results for '{text}'")
+        
+        # Restore selection
+        idx = self.model_combo.findText(current)
+        if idx >= 0:
+            self.model_combo.setCurrentIndex(idx)
+        else:
+            self.model_combo.setCurrentIndex(0)
+            
+        self.model_combo.blockSignals(False)
+        # Ensure UI updates for new selection
+        self.on_model_changed(self.model_combo.currentIndex())
 
         
     def on_model_changed(self, index):
         model = self.model_combo.currentText()
         
-        # Skip separators
-        if model.startswith("---"):
+        # Skip empty or separators
+        if not model or model.startswith("---"):
             return
+        
+        # Remove emoji prefix for matching (e.g., "📈 Linear: OLS" -> "Linear: OLS")
+        model_clean = model
+        if len(model) > 2 and model[1] == ' ':
+            model_clean = model[2:]  # Remove emoji + space
         
         # 1. Reset Visibility
         for label, widget in self.rows.values():
@@ -554,26 +612,14 @@ from statelix_py.core.data_manager import DataManager
         return code
 
     def add_wasm_plugins(self, plugins: dict):
-        """
-        Dynamically add WASM plugins to the model combo box.
-        
-        Args:
-            plugins: Dict from WasmPluginLoader {name: {path, exports, store}}
-        """
-        # Remove old WASM entries
-        for old_name in self.wasm_plugin_models:
-            idx = self.model_combo.findText(old_name)
-            if idx >= 0:
-                self.model_combo.removeItem(idx)
-        
+        """Dynamically add WASM plugins to the model list."""
         self.wasm_plugin_models.clear()
         
-        # Add new plugins
         for plugin_name, plugin_info in plugins.items():
             exports = plugin_info.get('exports', {})
-            
-            # Add each exported function as a callable model
             for func_name in exports.keys():
                 display_name = f"WASM: {plugin_name}::{func_name}"
-                self.model_combo.addItem(display_name)
                 self.wasm_plugin_models.append(display_name)
+        
+        # Refresh the combo box items through the filter logic
+        self._on_search_text_changed(self.search_edit.text())

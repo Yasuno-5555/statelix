@@ -34,7 +34,9 @@
 #ifndef STATELIX_SPATIAL_H
 #define STATELIX_SPATIAL_H
 
+#ifndef _USE_MATH_DEFINES
 #define _USE_MATH_DEFINES
+#endif
 #include <Eigen/Dense>
 #include <Eigen/Eigenvalues>
 #include <Eigen/Sparse>
@@ -225,7 +227,7 @@ public:
   SpatialResult fit(const Eigen::VectorXd &y, const Eigen::MatrixXd &X,
                     const Eigen::MatrixXd &W) {
     int n = y.size();
-    int k = X.cols();
+    // int k = X.cols(); // Unused
 
     SpatialResult result;
     result.model_type = model;
@@ -437,7 +439,8 @@ public:
   LMSpatialResult lm_tests(const Eigen::VectorXd &y, const Eigen::MatrixXd &X,
                            const Eigen::MatrixXd &W) {
     int n = y.size();
-    int k = X.cols();
+    // int k = X.cols(); // Unused
+
     LMSpatialResult result;
 
     // OLS residuals
@@ -473,7 +476,8 @@ public:
     result.rlm_lag_pvalue = 1 - chi2_cdf(result.rlm_lag, 1);
 
     // Robust LM-Error
-    double T_J = T * J / (J - T);
+    // double T_J = T * J / (J - T); // Unused
+
     result.rlm_error = (num_err - T * num_lag / J) *
                        (num_err - T * num_lag / J) / (T - T * T / J);
     result.rlm_error_pvalue = 1 - chi2_cdf(result.rlm_error, 1);

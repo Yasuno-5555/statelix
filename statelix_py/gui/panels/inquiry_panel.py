@@ -37,6 +37,45 @@ class InquiryPanel(QWidget):
         input_container = QWidget()
         input_layout = QVBoxLayout(input_container)
         
+        # 0.5 Data Load Section (NEW)
+        data_group = QGroupBox("📂 0. データを読み込む")
+        data_group.setStyleSheet("""
+            QGroupBox {
+                background-color: #252526;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                margin-top: 10px;
+            }
+            QGroupBox::title {
+                color: #4fc3f7;
+                font-weight: bold;
+            }
+        """)
+        d_layout = QVBoxLayout()
+        
+        self.data_status_label = QLabel("📋 データ: 未選択")
+        self.data_status_label.setStyleSheet("color: #888888;")
+        
+        self.btn_load_data = QPushButton("📂 データファイルを開く")
+        self.btn_load_data.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                padding: 8px;
+                border-radius: 4px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0098ff;
+            }
+        """)
+        self.btn_load_data.clicked.connect(self._on_load_data)
+        
+        d_layout.addWidget(self.data_status_label)
+        d_layout.addWidget(self.btn_load_data)
+        data_group.setLayout(d_layout)
+        input_layout.addWidget(data_group)
+        
         # 1. The Big Question
         question_group = QGroupBox("1. What do you want to know?")
         q_layout = QVBoxLayout()
@@ -71,14 +110,37 @@ class InquiryPanel(QWidget):
         self.combo_x = QComboBox() # Treatment/Driver
         self.combo_z = QComboBox() # Instrument/Control (Aux)
         
-        # Tooltips for Variables
-        self.combo_y.setToolTip("The result you care about (e.g., GDP, Health, Grades).")
-        self.combo_x.setToolTip("The factor you want to test (e.g., Policy, Medicine, Study Time).")
-        self.combo_z.setToolTip("<b>Instrument (The Nudge):</b><br>Something that pushes X but doesn't touch Y directly.<br><i>Example: A lottery that assigns study time (X), affecting grades (Y) only through studying.</i>")
+        # Tooltips for Variables (IMPROVED)
+        self.combo_y.setToolTip("🎯 <b>Outcome (Y)</b>: The result you care about.<br><i>Examples: GDP, Health Score, Test Grades, Sales</i>")
+        self.combo_x.setToolTip("📊 <b>Driver/Treatment (X)</b>: The factor you want to test.<br><i>Examples: Policy, Medicine Dose, Study Time, Advertising Budget</i>")
         
-        v_layout.addRow("Outcome (Y):", self.combo_y)
-        v_layout.addRow("Driver/Treatment (X):", self.combo_x)
-        v_layout.addRow("Instrument/Z:", self.combo_z) # Shortened label
+        # Improved Z explanation with example
+        z_tooltip = """
+        <b>🔧 Instrument/Z (操作変数)</b><br><br>
+        <b>何これ?</b> XをYに強制的に「押し込む」外部の力。<br><br>
+        <b>例: 勉強時間が成績に影響するか？</b><br>
+        • Y = 成績<br>
+        • X = 勉強時間<br>
+        • Z = 「図書館の近さ」(家が近い人は長く勉強する傾向)<br><br>
+        <b>なぜ必要?</b> Xが「自己選択」の場合（やる気ある人が勉強する等）、<br>
+        Zで「ランダムにXを割り当てた効果」を推定する。<br><br>
+        <i>分からなければ空欄でOK → Drivers分析になります</i>
+        """
+        self.combo_z.setToolTip(z_tooltip)
+        
+        v_layout.addRow("🎯 Outcome (Y):", self.combo_y)
+        v_layout.addRow("📊 Driver/Treatment (X):", self.combo_x)
+        
+        # Z with inline help button
+        z_row = QHBoxLayout()
+        z_row.addWidget(self.combo_z, 1)
+        self.btn_z_help = QPushButton("❓")
+        self.btn_z_help.setFixedWidth(30)
+        self.btn_z_help.setToolTip("操作変数の詳しい説明を表示")
+        self.btn_z_help.clicked.connect(self._show_z_explanation)
+        z_row.addWidget(self.btn_z_help)
+        
+        v_layout.addRow("🔧 Instrument/Z:", z_row)
         
         var_group.setLayout(v_layout)
         input_layout.addWidget(var_group)
@@ -229,6 +291,123 @@ class InquiryPanel(QWidget):
             
         except Exception as e:
             QMessageBox.critical(self, "Export Error", str(e))
+    
+    def _on_load_data(self):
+        """Open file dialog to load data directly from Inquiry Mode."""
+        from PySide6.QtWidgets import QFileDialog
+        import pandas as pd
+        import os
+        
+        filters = (
+            "All Supported Files (*.csv *.xlsx *.xls *.json *.parquet);;"
+            "CSV Files (*.csv);;"
+            "Excel Files (*.xlsx *.xls);;"
+            "JSON Files (*.json);;"
+            "Parquet Files (*.parquet);;"
+            "All Files (*)"
+        )
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Open Data File", "", filters
+        )
+        
+        if not file_path:
+            return
+        
+        try:
+            ext = os.path.splitext(file_path)[1].lower()
+            df = None
+            
+            if ext == '.csv':
+                # Try multiple encodings
+                for enc in ['utf-8', 'cp932', 'shift_jis', 'latin1']:
+                    try:
+                        df = pd.read_csv(file_path, encoding=enc)
+                        break
+                    except (UnicodeDecodeError, ValueError):
+                        continue
+            elif ext in ['.xlsx', '.xls']:
+                df = pd.read_excel(file_path)
+            elif ext == '.json':
+                df = pd.read_json(file_path)
+            elif ext in ['.parquet', '.pq']:
+                df = pd.read_parquet(file_path)
+            
+            if df is not None:
+                # Update DataManager
+                from statelix_py.core.data_manager import DataManager
+                dm = DataManager.instance()
+                dm.set_data(df, file_path)
+                
+                # Update columns in this panel
+                self.update_columns(df)
+                
+                # Update status
+                filename = os.path.basename(file_path)
+                self.data_status_label.setText(f"✅ データ: {filename} ({df.shape[0]}行 x {df.shape[1]}列)")
+                self.data_status_label.setStyleSheet("color: #81c784;")
+                
+                QMessageBox.information(self, "Success", f"データを読み込みました: {filename}")
+            else:
+                raise Exception("ファイル形式を読み込めませんでした。")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"データ読み込みエラー:\n{str(e)}")
+    
+    def _show_z_explanation(self):
+        """Show detailed explanation dialog for Instrument/Z variable."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QDialogButtonBox
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("🔧 操作変数 (Instrument/Z) とは？")
+        dialog.setMinimumWidth(500)
+        
+        layout = QVBoxLayout(dialog)
+        
+        explanation = """
+        <h2>🔧 操作変数 (Instrument Variable / IV) とは？</h2>
+        
+        <h3>📖 簡単な説明</h3>
+        <p>XがYに与える「本当の因果効果」を知りたいとき、<br>
+        Xに「外から」影響を与える変数Zを使って推定します。</p>
+        
+        <h3>🎯 なぜ必要？</h3>
+        <p>多くの場合、Xは「自己選択」の結果です：</p>
+        <ul>
+            <li>やる気のある人が多く勉強する（X=勉強時間）</li>
+            <li>健康な人が運動する（X=運動量）</li>
+            <li>優秀な企業がR&Dに投資する（X=研究開発費）</li>
+        </ul>
+        <p>この場合、XとYの関係は「因果」ではなく「相関」かもしれません。</p>
+        
+        <h3>🔬 Zの条件（重要！）</h3>
+        <ol>
+            <li><b>関連性</b>: ZはXに影響を与える</li>
+            <li><b>排他性</b>: ZはYに「直接」影響しない（Xを通じてのみ）</li>
+        </ol>
+        
+        <h3>💡 具体例</h3>
+        <table border="1" cellpadding="5" style="border-collapse: collapse;">
+            <tr><th>研究課題</th><th>Y</th><th>X</th><th>Z</th></tr>
+            <tr><td>教育の効果</td><td>収入</td><td>教育年数</td><td>家から学校への距離</td></tr>
+            <tr><td>兵役の効果</td><td>将来収入</td><td>兵役経験</td><td>くじ引き番号</td></tr>
+            <tr><td>政策の効果</td><td>健康</td><td>治療受診</td><td>地域の医療キャパ</td></tr>
+        </table>
+        
+        <h3>⚠️ 注意点</h3>
+        <p>良いZを見つけるのは難しいです。<br>
+        分からなければ空欄にして、まずは「Drivers」分析から始めましょう。</p>
+        """
+        
+        label = QLabel(explanation)
+        label.setWordWrap(True)
+        label.setStyleSheet("font-size: 11pt; line-height: 1.5;")
+        layout.addWidget(label)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons)
+        
+        dialog.exec()
         
     def update_columns(self, df):
         if df is None: return
@@ -236,6 +415,11 @@ class InquiryPanel(QWidget):
         for c in [self.combo_y, self.combo_x, self.combo_z]:
             c.clear()
             c.addItems(cols)
+        
+        # Update data status if available
+        if hasattr(self, 'data_status_label'):
+            self.data_status_label.setText(f"✅ データ: {df.shape[0]}行 x {df.shape[1]}列")
+            self.data_status_label.setStyleSheet("color: #81c784;")
             
     def update_ui_state(self):
         mid = self.q_btn_group.checkedId()
@@ -289,3 +473,4 @@ class InquiryPanel(QWidget):
         ax = self.figure.add_subplot(111)
         fig_func(ax)
         self.canvas.draw()
+

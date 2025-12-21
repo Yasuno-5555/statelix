@@ -7,9 +7,11 @@ import pandas as pd
 import os
 from statelix_py.core.data_manager import DataManager
 from statelix_py.gui.models.pandas_model import PandasModel
+from statelix_py.gui.widgets.spreadsheet_widget import SpreadsheetWidget
 
 class DataPanel(QWidget):
     data_loaded = Signal(object) # Signal carrying the DataFrame
+    data_modified = Signal()  # Signal when data is modified in spreadsheet
 
     def __init__(self):
         super().__init__()
@@ -19,19 +21,35 @@ class DataPanel(QWidget):
 
     def init_ui(self):
         layout = QVBoxLayout()
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
         
-        # Title
-        title = QLabel("データパネル")
-        title.setStyleSheet("font-weight: bold; font-size: 14px;")
-        layout.addWidget(title)
+        # Title with Excel-like branding
+        header_layout = QHBoxLayout()
+        title = QLabel("📊 データパネル (Excel Mode)")
+        title.setStyleSheet("font-weight: bold; font-size: 14px; color: #00b050;")
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        layout.addLayout(header_layout)
         
         # File Info Frame
         info_frame = QFrame()
         info_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        info_frame.setStyleSheet("""
+            QFrame {
+                background-color: #252526;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+                padding: 5px;
+            }
+        """)
         info_layout = QHBoxLayout()
+        info_layout.setContentsMargins(10, 5, 10, 5)
         
         self.file_label = QLabel("データセット: 未選択")
+        self.file_label.setStyleSheet("color: #d4d4d4;")
         self.info_label = QLabel("行: - | 列: - | サイズ: -")
+        self.info_label.setStyleSheet("color: #888888;")
         
         info_layout.addWidget(self.file_label)
         info_layout.addStretch()
@@ -39,56 +57,73 @@ class DataPanel(QWidget):
         info_frame.setLayout(info_layout)
         layout.addWidget(info_frame)
 
+        # Tools Layout (Excel-like toolbar)
+        tools_frame = QFrame()
+        tools_frame.setStyleSheet("""
+            QFrame {
+                background-color: #2d2d30;
+                border: 1px solid #3e3e42;
+                border-radius: 4px;
+            }
+            QPushButton {
+                background-color: transparent;
+                border: 1px solid transparent;
+                padding: 5px 10px;
+                font-size: 9pt;
+            }
+            QPushButton:hover {
+                background-color: #3e3e42;
+                border: 1px solid #007acc;
+                border-radius: 3px;
+            }
+        """)
+        tools_layout = QHBoxLayout(tools_frame)
+        tools_layout.setContentsMargins(5, 3, 5, 3)
+        tools_layout.setSpacing(2)
         
-        # Tools Layout
-        tools_layout = QHBoxLayout()
-        self.btn_create_col = QPushButton("列作成 (Transform)")
+        self.load_btn = QPushButton("📂 開く")
+        self.load_btn.clicked.connect(self.load_data)
+        
+        self.btn_create_col = QPushButton("➕ 列作成")
         self.btn_create_col.clicked.connect(self.on_create_column)
-        self.btn_filter = QPushButton("フィルタ (Filter)")
+        
+        self.btn_filter = QPushButton("🔍 フィルタ")
         self.btn_filter.clicked.connect(self.on_filter_rows)
-        self.btn_merge = QPushButton("結合 (Merge)")
+        
+        self.btn_merge = QPushButton("🔗 結合")
         self.btn_merge.clicked.connect(self.on_merge)
-        self.btn_reshape = QPushButton("変形 (Reshape)")
+        
+        self.btn_reshape = QPushButton("📐 変形")
         self.btn_reshape.clicked.connect(self.on_reshape)
-        self.btn_reset = QPushButton("リセット (Reset)")
+        
+        self.btn_reset = QPushButton("🔄 リセット")
         self.btn_reset.clicked.connect(self.on_reset_data)
         
+        tools_layout.addWidget(self.load_btn)
+        tools_layout.addWidget(QLabel("|"))
         tools_layout.addWidget(self.btn_create_col)
         tools_layout.addWidget(self.btn_filter)
         tools_layout.addWidget(self.btn_merge)
         tools_layout.addWidget(self.btn_reshape)
+        tools_layout.addWidget(QLabel("|"))
         tools_layout.addWidget(self.btn_reset)
         tools_layout.addStretch()
         
-        layout.addLayout(tools_layout)
+        layout.addWidget(tools_frame)
 
-        # Actions
-        btn_layout = QHBoxLayout()
-        self.load_btn = QPushButton("データ読み込み")
-        self.load_btn.clicked.connect(self.load_data)
+        # Excel-like Spreadsheet Widget (replaces QTableView)
+        self.spreadsheet = SpreadsheetWidget()
+        self.spreadsheet.set_model(self.model)
+        self.spreadsheet.data_modified.connect(self._on_spreadsheet_modified)
         
-        # Add Row / Delete Row (Future Work)
-        # self.add_row_btn = QPushButton("+ 行")
-        # self.del_row_btn = QPushButton("- 行")
+        # Keep reference to table_view for backward compatibility
+        self.table_view = self.spreadsheet.table_view
+        self.table_view.setSortingEnabled(True) # ENABLE SORTING
         
-        btn_layout.addWidget(self.load_btn)
-        btn_layout.addStretch()
-        layout.addLayout(btn_layout)
-
-        # Table View (Spreadsheet)
-        self.table_view = QTableView()
-        self.table_view.setModel(self.model)
-        self.table_view.setAlternatingRowColors(True)
-        self.table_view.setSortingEnabled(True) # Enable sorting
+        layout.addWidget(self.spreadsheet)
         
-        # --- Context Menu ---
-        self.table_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.table_view.customContextMenuRequested.connect(self.on_context_menu)
-        
-        layout.addWidget(self.table_view)
-        
-        # Shortcuts for Copy/Paste
-        from PySide6.QtGui import QKeySequence, QAction, QShortcut
+        # Shortcuts for Copy/Paste (handled by SpreadsheetWidget, but keep for compatibility)
+        from PySide6.QtGui import QKeySequence, QShortcut
         self.copy_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self.table_view)
         self.copy_shortcut.activated.connect(self.copy_selection)
         
@@ -102,6 +137,13 @@ class DataPanel(QWidget):
         
         # Keep original data for reset
         self._original_df = None
+    
+    def _on_spreadsheet_modified(self):
+        """Handle modifications from spreadsheet widget."""
+        # Sync model data back to DataManager
+        if self.model.get_data() is not None:
+            self.dm.df = self.model.get_data()
+            self.data_modified.emit()
 
     def on_context_menu(self, pos):
         if self.dm.df is None: return
@@ -373,6 +415,13 @@ class DataPanel(QWidget):
         
         self.update_display(path, df)
         self.data_loaded.emit(df)
+    
+    def load_data_from_path(self, file_path: str):
+        """
+        Public method to load data from a file path.
+        Used by drag-drop and recent files features.
+        """
+        self._load_file_path(file_path)
 
     def load_data(self):
         filters = (

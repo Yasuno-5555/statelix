@@ -246,7 +246,11 @@ class PropensityScoreMatching:
         
         # Use C++ backend if available and requested
         if use_cpp and _HAS_CPP_CORE and ps_scores is None:
-            return self._fit_cpp(y, treatment, X)
+            try:
+                return self._fit_cpp(y, treatment, X)
+            except (AttributeError, RuntimeError):
+                # C++ PSM class not available, fall back to Python
+                pass
         
         # Pure Python fallback
         # Step 1: Estimate propensity scores
