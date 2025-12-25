@@ -33,6 +33,36 @@ class StepLogger:
         print(f"[{step_id}] Start: {model} with {params}")
         return step_id
     
+    def log_topology(self, step_id: str, metric_name: str, value: float):
+        """
+        Log a topological metric for a step (e.g., persistence score).
+        """
+        for step in self._steps:
+            if step["id"] == step_id:
+                if "topology" not in step:
+                    step["topology"] = {}
+                step["topology"][metric_name] = value
+                print(f"[{step_id}] Topology: {metric_name}={value:.4f}")
+                return
+        print(f"[WARNING] Step {step_id} not found for topology logging")
+
+    def log_diagnostics(self, step_id: str, report):
+        """
+        Log a diagnostic report (from ModelCritic).
+        """
+        for step in self._steps:
+            if step["id"] == step_id:
+                step["diagnostics"] = {
+                    "mci": report.mci.total_score,
+                    "fit": report.mci.fit_score,
+                    "topo": report.mci.topology_score,
+                    "geo": report.mci.geometry_score,
+                    "objections": len(report.messages)
+                }
+                print(f"[{step_id}] Diagnostics: MCI={report.mci.total_score:.2f} (Objections: {len(report.messages)})")
+                return
+        print(f"[WARNING] Step {step_id} not found for diagnostic logging")
+
     def complete_step(self, step_id: str, status: str, results: dict = None):
         """
         Mark a step as completed.
@@ -48,7 +78,12 @@ class StepLogger:
                 step["status"] = status
                 step["results"] = results
                 elapsed = (step["end_time"] - step["start_time"]).total_seconds()
-                print(f"[{step_id}] Complete: {status} ({elapsed:.3f}s)")
+                
+                topo_msg = ""
+                if "topology" in step:
+                    topo_msg = f" | Topology: {step['topology']}"
+                    
+                print(f"[{step_id}] Complete: {status} ({elapsed:.3f}s){topo_msg}")
                 return
         
         print(f"[WARNING] Step {step_id} not found")

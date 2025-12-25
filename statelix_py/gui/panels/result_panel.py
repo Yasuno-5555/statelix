@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 from statelix_py.gui.i18n import t
+from ..widgets.diagnostics_widget import DiagnosticsPanel
 
 class ResultPanel(QWidget):
     def __init__(self):
@@ -17,93 +18,102 @@ class ResultPanel(QWidget):
         layout.setSpacing(10)
         
         # Title
+        title_layout = QHBoxLayout()
         title = QLabel(t("panel.result"))
         title.setStyleSheet("font-weight: bold; font-size: 16px; color: #007acc;")
-        layout.addWidget(title)
+        title_layout.addWidget(title)
+        title_layout.addStretch()
+        
+        # Governance Label
+        gov = QLabel("Statelix Governance Active")
+        gov.setStyleSheet("color: #666; font-size: 10px; font-style: italic;")
+        title_layout.addWidget(gov)
+        
+        self.btn_refusal_report = QPushButton(t("btn.save_refusal_report"))
+        self.btn_refusal_report.setVisible(False)
+        self.btn_refusal_report.setStyleSheet("background-color: #d32f2f; color: white; padding: 4px 8px; font-weight: bold;")
+        self.btn_refusal_report.clicked.connect(self.on_refusal_report)
+        title_layout.addWidget(self.btn_refusal_report)
+        
+        layout.addLayout(title_layout)
 
-        # 1. Summary Metrics
+        # Content Splitter (Diagnostics Top, Results Bottom? Or Tabs?)
+        # User wants "Dashboard". Let's put Diagnostics at the TOP as the "Gatekeeper".
+        
+        # 1. Diagnostics Judge
+        self.diag_panel = DiagnosticsPanel()
+        layout.addWidget(self.diag_panel)
+        
+        # Divider
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(line)
+        
+        # 2. Results Container (Hidden if rejected)
+        self.result_container = QWidget()
+        res_layout = QVBoxLayout(self.result_container)
+        res_layout.setContentsMargins(0,0,0,0)
+        
+        # ... (Metrics) ...
         metrics_group = QGroupBox(t("panel.result.summary"))
         metrics_layout = QHBoxLayout()
-        
         self.status_label = QLabel(t("label.waiting"))
         self.status_label.setStyleSheet("font-weight: bold; font-size: 12px;")
-        
         self.r2_label = QLabel(t("result.r2") + ": -")
         self.mse_label = QLabel(t("result.mse") + ": -")
-        
         metrics_layout.addWidget(self.status_label)
         metrics_layout.addStretch()
         metrics_layout.addWidget(self.r2_label)
         metrics_layout.addSpacing(30)
         metrics_layout.addWidget(self.mse_label)
         metrics_group.setLayout(metrics_layout)
-        layout.addWidget(metrics_group)
+        res_layout.addWidget(metrics_group)
 
-        # 2. Results Content (Split View: Table/Text vs Graph)
+        # ... (Text/Graph) ...
         content_layout = QHBoxLayout()
+        text_widget = QWidget(); text_l = QVBoxLayout(text_widget); text_l.setContentsMargins(0,0,0,0)
         
-        # Text/Table Result
-        text_widget = QWidget()
-        text_layout = QVBoxLayout(text_widget)
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Tools Header
+        # Tools
         tools_layout = QHBoxLayout()
         tools_layout.addWidget(QLabel(t("panel.result.tools")))
         tools_layout.addStretch()
-        
-        self.btn_copy_md = QPushButton(t("btn.copy_md"))
-        self.btn_copy_md.clicked.connect(self.on_copy_markdown)
-        self.btn_copy_tex = QPushButton(t("btn.copy_tex"))
-        self.btn_copy_tex.clicked.connect(self.on_copy_latex)
-        
-        tools_layout.addWidget(self.btn_copy_md)
-        tools_layout.addWidget(self.btn_copy_tex)
-        text_layout.addLayout(tools_layout)
+        self.btn_copy_md = QPushButton(t("btn.copy_md")); self.btn_copy_md.clicked.connect(self.on_copy_markdown)
+        self.btn_copy_tex = QPushButton(t("btn.copy_tex")); self.btn_copy_tex.clicked.connect(self.on_copy_latex)
+        tools_layout.addWidget(self.btn_copy_md); tools_layout.addWidget(self.btn_copy_tex)
+        text_l.addLayout(tools_layout)
         
         self.result_text = QTextEdit()
         self.result_text.setReadOnly(True)
-        self.result_text.setPlaceholderText(t("label.waiting"))
-        self.result_text.setStyleSheet("font-family: 'Consolas', 'Courier New', monospace; background-color: #1a1a1a; color: #dcdcdc; border: 1px solid #333;")
-        text_layout.addWidget(self.result_text)
+        self.result_text.setStyleSheet("font-family: 'Consolas', monospace; background-color: #1a1a1a; color: #dcdcdc; border: 1px solid #333;")
+        text_l.addWidget(self.result_text)
         
-        # Action Buttons footer
-        footer_layout = QHBoxLayout()
-        self.btn_export_csv = QPushButton("CSV")
-        self.btn_export_csv.clicked.connect(self.on_export_csv)
-        self.btn_export_excel = QPushButton("Excel")
-        self.btn_export_excel.clicked.connect(self.on_export_excel)
-        self.btn_report = QPushButton(t("btn.generate_report"))
-        self.btn_report.clicked.connect(self.on_generate_report)
+        # Exports
+        footer = QHBoxLayout()
+        self.btn_export_csv = QPushButton("CSV"); self.btn_export_csv.clicked.connect(self.on_export_csv)
+        self.btn_export_excel = QPushButton("Excel"); self.btn_export_excel.clicked.connect(self.on_export_excel)
+        self.btn_report = QPushButton(t("btn.generate_report")); self.btn_report.clicked.connect(self.on_generate_report)
         self.btn_report.setStyleSheet("background-color: #217346; color: white;")
-        
-        footer_layout.addWidget(self.btn_export_csv)
-        footer_layout.addWidget(self.btn_export_excel)
-        footer_layout.addStretch()
-        footer_layout.addWidget(self.btn_report)
-        text_layout.addLayout(footer_layout)
+        footer.addWidget(self.btn_export_csv); footer.addWidget(self.btn_export_excel); footer.addStretch(); footer.addWidget(self.btn_report)
+        text_l.addLayout(footer)
         
         content_layout.addWidget(text_widget, stretch=1)
         
-        # Graph Placeholder
-        graph_widget = QWidget()
-        graph_layout = QVBoxLayout(graph_widget)
-        graph_layout.setContentsMargins(0, 0, 0, 0)
-        
+        # Graph
+        graph_widget = QWidget(); graph_l = QVBoxLayout(graph_widget); graph_l.setContentsMargins(0,0,0,0)
         self.graph_placeholder = QLabel("📈 Visualization")
         self.graph_placeholder.setFrameShape(QFrame.Shape.StyledPanel)
         self.graph_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.graph_placeholder.setStyleSheet("background-color: #252526; border: 1px dashed #444; color: #777; font-size: 16px;")
-        graph_layout.addWidget(self.graph_placeholder)
-        
+        graph_l.addWidget(self.graph_placeholder)
         content_layout.addWidget(graph_widget, stretch=1)
         
-        layout.addLayout(content_layout)
+        res_layout.addLayout(content_layout)
+        layout.addWidget(self.result_container)
 
-        # 3. Step Log
+        # 3. Log
         log_group = QGroupBox(t("panel.result.log"))
         log_layout = QVBoxLayout()
-        
         self.log_view = QTextEdit()
         self.log_view.setMaximumHeight(100)
         self.log_view.setReadOnly(True)
@@ -111,38 +121,66 @@ class ResultPanel(QWidget):
         log_layout.addWidget(self.log_view)
         log_group.setLayout(log_layout)
         layout.addWidget(log_group)
-
+        
         self.setLayout(layout)
 
     def display_result(self, result_data: dict):
-        self._last_result = result_data # Store for export
+        self._last_result = result_data 
         success = result_data.get('success', True)
+        timestamp = pd.Timestamp.now().strftime("%H:%M:%S")
+
+        # --- Governance Check ---
+        # Did we receive diagnostic data?
+        diag = result_data.get('diagnostics', {})
+        if not diag:
+            # Fallback if no diagnostics (e.g. error before fit)
+            # Or legacy model
+            mci = 0.0
+            objections = ["System Error: Diagnostics missing"] if success else ["Analysis Failed"]
+            suggestions = []
+            history = []
+        else:
+            mci = diag.get('mci', 0.0)
+            objections = diag.get('objections_list', [])
+            suggestions = diag.get('suggestions', [])
+            history = diag.get('history', [])
+
+        # Update Judge Panel
+        self.diag_panel.update_diagnostics(mci, objections, suggestions, history)
         
-        if success:
+        # VETO LOGIC: If success is False OR MCI < 0.4
+        # Note: If ModelRejectedError was caught, `success` might be False but we have diag data.
+        # We assume `main_window` catches ModelRejectedError and passes the diag data here.
+        
+        is_rejected = (not success) or (mci < 0.4 and mci > 0.0) 
+        # mci > 0.0 check avoids blocking models that simply don't have diagnostics yet (legacy fallback)
+        # But user wants STRICT. For now, trust the 'success' flag primarily, or strict MCI.
+        
+        if is_rejected:
+            self.result_container.setVisible(False)
+            self.btn_refusal_report.setVisible(True)
+            self.status_label.setText("🛑 RESULT HIDDEN (Governance Veto)")
+            self.log_view.append(f"[{timestamp}] [WARNING] Result withheld due to low credibility or failure.")
+        else:
+            self.result_container.setVisible(True)
+            self.btn_refusal_report.setVisible(False)
             self.status_label.setText("✅ " + t("label.success"))
             self.status_label.setStyleSheet("color: #4ec9b0; font-weight: bold;")
-        else:
-            self.status_label.setText("❌ " + t("label.failure"))
-            self.status_label.setStyleSheet("color: #f44747; font-weight: bold;")
-        
-        r2 = result_data.get('r2', 'N/A')
-        mse = result_data.get('mse', 'N/A')
-        
-        self.r2_label.setText(f"{t('result.r2')}: {r2}")
-        self.mse_label.setText(f"{t('result.mse')}: {mse}")
-        
-        summary = result_data.get('summary', '')
-        # If there's a table in result, format it
-        if 'table' in result_data:
-            df = result_data['table']
-            if isinstance(df, pd.DataFrame):
-                summary += "\n\n" + df.to_string()
-        
-        self.result_text.setText(summary)
-        
-        log_level = "INFO" if success else "ERROR"
-        timestamp = pd.Timestamp.now().strftime("%H:%M:%S")
-        self.log_view.append(f"[{timestamp}] [{log_level}] Analysis completed. Hash: {result_data.get('hash', '???')}")
+            
+            # Populate fields
+            r2 = result_data.get('r2', 'N/A')
+            mse = result_data.get('mse', 'N/A')
+            self.r2_label.setText(f"{t('result.r2')}: {r2}")
+            self.mse_label.setText(f"{t('result.mse')}: {mse}")
+            
+            summary = result_data.get('summary', '')
+            if 'table' in result_data:
+                df = result_data['table']
+                if isinstance(df, pd.DataFrame):
+                    summary += "\n\n" + df.to_string()
+            self.result_text.setText(summary)
+            
+            self.log_view.append(f"[{timestamp}] [INFO] Analysis accepted. MCI: {mci:.2f}")
 
     def on_copy_markdown(self):
         if not hasattr(self, '_last_result'): return
@@ -213,3 +251,21 @@ class ResultPanel(QWidget):
             report.save(path)
             QMessageBox.information(self, t("label.success"), f"Report saved to {path}")
 
+        if path:
+            report.save(path)
+            QMessageBox.information(self, t("label.success"), f"Report saved to {path}")
+
+    def on_refusal_report(self):
+        """Generate and save a Refusal Report."""
+        from statelix_py.utils.report_generator import ReportGenerator
+        
+        if not hasattr(self, '_last_result') or 'diagnostics' not in self._last_result:
+            return
+            
+        diag = self._last_result['diagnostics']
+        report = ReportGenerator.create_refusal_report(diag)
+        
+        path, _ = QFileDialog.getSaveFileName(self, "Save Refusal Report", "Refusal_Report.html", "HTML Files (*.html)")
+        if path:
+            report.save(path)
+            QMessageBox.information(self, "Saved", f"Refusal report saved to {path}")

@@ -3,7 +3,13 @@
 __version__ = '0.2.0'
 
 # Core Models
-from statelix.models.linear import StatelixOLS
+from .models.linear import StatelixOLS
+from .models.bayes import BayesianLogisticRegression
+
+# Governance
+from .facade import fit_and_judge
+from .diagnostics.presets import GovernanceMode
+from .diagnostics.critic import ModelRejectedError
 
 # Accelerator
 try:
@@ -11,7 +17,11 @@ try:
 except ImportError:
     accelerator = None
 
-# Stats
-# from statelix.stats import ... 
-
-__all__ = ['StatelixOLS', 'accelerator']
+__all__ = [
+    'StatelixOLS', 
+    'BayesianLogisticRegression',
+    'fit_and_judge',
+    'GovernanceMode',
+    'ModelRejectedError',
+    'accelerator'
+]

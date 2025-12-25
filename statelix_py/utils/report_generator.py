@@ -88,3 +88,32 @@ class ReportGenerator:
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(html)
         return filepath
+
+    @classmethod
+    def create_refusal_report(cls, diagnostics: Dict[str, Any]) -> 'ReportGenerator':
+        """Create a report specifically for rejected models."""
+        report = cls("Statelix Refusal Report")
+        
+        mci = diagnostics.get("mci", 0.0)
+        report.add_section("Governance Decision", 
+            f"Result REJECTED by Statelix Governance Protocols.\n"
+            f"Model Credibility Index (MCI): {mci:.2f} / 1.00\n"
+            f"Status: UNRELIABLE"
+        )
+        
+        objs = diagnostics.get("objections_list", [])
+        if objs:
+            obj_text = "\n".join([f"- {o}" for o in objs])
+            report.add_section("Objections (Why it was rejected)", obj_text)
+            
+        suggs = diagnostics.get("suggestions", [])
+        if suggs:
+            sugg_text = "\n".join([f"- {s}" for s in suggs])
+            report.add_section("Suggestions for Improvement", sugg_text)
+            
+        report.add_section("Integrity Statement", 
+            "Statelix does not guarantee correctness. It guarantees refusal to lie.\n"
+            "This report documents that the model failed to meet the necessary trust thresholds."
+        )
+        
+        return report

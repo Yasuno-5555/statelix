@@ -9,6 +9,7 @@ vendor_dir = os.path.abspath('vendor/eigen')
 zigen_dir = os.path.abspath('vendor/Zigen/include')  # Zigen library
 mathuniverse_dir = os.path.abspath('vendor/MathUniverse/include') # MathUniverse library
 mathuniverse_base_dir = os.path.join(mathuniverse_dir, 'MathUniverse')
+sokudo_dir = os.path.abspath('vendor/sokudo/include')
 pybind_dir = pybind11.get_include()
 
 # Helper for platform specific flags
@@ -19,9 +20,11 @@ cxx_args = ['-D_USE_MATH_DEFINES']
 if sys.platform == 'win32':
     # MSVC specific flags (C++20 for Zigen compatibility)
     cxx_args += ['/std:c++20', '/O2', '/bigobj', '/EHsc']
+    link_args = []
 else:
     # GCC/Clang specific flags (C++20 for Zigen compatibility)
-    cxx_args += ['-std=c++20', '-O2', '-fPIC', '-march=native']
+    cxx_args += ['-std=c++20', '-O2', '-fPIC', '-march=native', '-fopenmp']
+    link_args = ['-fopenmp', '-lgomp']
 
 # Define extensions
 ext_modules = [
@@ -29,32 +32,36 @@ ext_modules = [
     Extension(
         'statelix.causal',
         sources=['src/bindings/python_bindings_causal.cpp', 'src/linear_model/solver.cpp'],
-        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, pybind_dir],
+        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, sokudo_dir, pybind_dir],
         extra_compile_args=cxx_args,
+        extra_link_args=link_args,
         language='c++'
     ),
     # 2. Panel (Econometrics)
     Extension(
         'statelix.panel',
         sources=['src/bindings/python_bindings_panel.cpp', 'src/linear_model/solver.cpp'],
-        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, pybind_dir],
+        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, sokudo_dir, pybind_dir],
         extra_compile_args=cxx_args,
+        extra_link_args=link_args,
         language='c++'
     ),
     # 3. Bayes (HMC + VI + Models)
     Extension(
         'statelix.bayes',
         sources=['src/bindings/python_bindings_bayes.cpp'],
-        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, pybind_dir],
+        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, sokudo_dir, pybind_dir],
         extra_compile_args=cxx_args,
+        extra_link_args=link_args,
         language='c++'
     ),
     # 4. Time Series
     Extension(
         'statelix.time_series',
         sources=['src/bindings/python_bindings_timeseries.cpp', 'src/time_series/cpd.cpp', 'src/linear_model/solver.cpp'],
-        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, pybind_dir],
+        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, sokudo_dir, pybind_dir],
         extra_compile_args=cxx_args,
+        extra_link_args=link_args,
         language='c++'
     ),
     # 5. Linear Models (OLS/GLM) - Disabled due to build issues
@@ -70,24 +77,27 @@ ext_modules = [
     Extension(
         'statelix.spatial',
         sources=['src/bindings/python_bindings_spatial.cpp', 'src/spatial/icp.cpp', 'src/search/kdtree.cpp'],
-        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, pybind_dir],
+        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, sokudo_dir, pybind_dir],
         extra_compile_args=cxx_args,
+        extra_link_args=link_args,
         language='c++'
     ),
     # 7. Graph Analysis
     Extension(
         'statelix.graph',
         sources=['src/bindings/python_bindings_graph.cpp'],
-        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, pybind_dir],
+        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, sokudo_dir, pybind_dir],
         extra_compile_args=cxx_args,
+        extra_link_args=link_args,
         language='c++'
     ),
     # 8. MathUniverse Core Skeleton (Risan/Keirin)
     Extension(
         'statelix.mathuniverse',
         sources=['src/bindings/python_bindings_mathuniverse.cpp'],
-        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, pybind_dir],
+        include_dirs=[src_dir, vendor_dir, os.path.abspath('vendor'), zigen_dir, mathuniverse_dir, mathuniverse_base_dir, sokudo_dir, pybind_dir],
         extra_compile_args=cxx_args,
+        extra_link_args=link_args,
         language='c++'
     ),
 ]
