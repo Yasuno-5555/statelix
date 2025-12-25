@@ -7,6 +7,7 @@
 #include "map.h" // Needed for MAPEstimator
 #include "vi.h"
 #include <Eigen/Dense>
+#include <MathUniverse/Zigen/dual.hpp>
 #include <cmath>
 #include <iostream>
 #include <vector>
@@ -285,6 +286,82 @@ public:
 
     map_theta = result.mode;
     // result.hessian is also available if needed
+  }
+
+  /**
+   * @brief Find MAP estimate using MathUniverse Dual numbers (Forward AD)
+   *
+   * This is specialized for small parameter counts and is faster than
+   * reverse-mode.
+   */
+  void fit_map_dual() {
+    using Dual = MathUniverse::Zigen::Dual<double>;
+
+    auto compute_nlp_dual = [&](const Eigen::VectorXd &theta_vals,
+                                int target_idx) -> std::pair<double, double> {
+      // Pack Duals: ONLY the target_idx has grad=1.0
+      int k = n_features;
+      auto get_dual = [&](int i) {
+        return Dual(theta_vals(i), (i == target_idx ? 1.0 : 0.0));
+      };
+
+      Dual log_sigma = get_dual(k);
+      Dual sigma = exp(log_sigma);
+      Dual sigma2 = sigma * sigma;
+
+      Dual log_lik(0.0);
+      for (int i = 0; i < n_samples; ++i) {
+        Dual pred(0.0);
+        for (int j = 0; j < k; ++j) {
+          pred = pred + Dual(X(i, j)) * get_dual(j);
+        }
+        Dual resid = Dual(y(i)) - pred;
+        Dual ssr = resid * resid;
+        log_lik = log_lik - Dual(0.5 * std::log(2.0 * M_PI)) - log_sigma -
+                  Dual(0.5) * ssr / sigma2;
+      }
+
+      // Priors
+      Dual log_prior_beta(0.0);
+      double tau2 = prior_beta_std * prior_beta_std;
+      for (int j = 0; j < k; ++j) {
+        Dual b = get_dual(j);
+        log_prior_beta = log_prior_beta - Dual(0.5) * b * b / Dual(tau2);
+      }
+
+      double gamma = prior_sigma_scale;
+      Dual sigma_ratio = sigma / Dual(gamma);
+      Dual log_prior_log_sigma = Dual(std::log(2.0) - std::log(M_PI * gamma)) -
+                                 log(Dual(1.0) + sigma_ratio * sigma_ratio) +
+                                 log_sigma;
+
+      Dual log_posterior = log_lik + log_prior_beta + log_prior_log_sigma;
+      Dual nlp = -log_posterior;
+
+      return {nlp.val, nlp.grad};
+    };
+
+    // Simple Gradient Descent using Dual-calculated gradients
+    Eigen::VectorXd theta = Eigen::VectorXd::Zero(n_features + 1);
+    double y_std =
+        std::sqrt((y.array() - y.mean()).square().sum() / (n_samples - 1));
+    theta(n_features) = std::log(std::max(y_std, 1e-6));
+
+    double lr = 1e-3;
+    for (int iter = 0; iter < 1000; ++iter) {
+      Eigen::VectorXd grad(n_features + 1);
+      for (int i = 0; i < n_features + 1; ++i) {
+        auto [v, g] = compute_nlp_dual(theta, i);
+        grad(i) = g;
+      }
+
+      if (grad.norm() < 1e-5)
+        break;
+      theta -= lr * grad;
+      if (iter % 100 == 0)
+        lr *= 0.95;
+    }
+    map_theta = theta;
   }
 
   /**

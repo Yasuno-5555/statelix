@@ -75,4 +75,20 @@ PYBIND11_MODULE(spatial, m) {
            py::arg("W"))
       .def("lm_tests", &statelix::SpatialRegression::lm_tests, py::arg("y"),
            py::arg("X"), py::arg("W"));
+
+  // --- ICP Bindings ---
+  py::class_<statelix::ICPResult>(m, "ICPResult")
+      .def_readonly("rotation", &statelix::ICPResult::rotation)
+      .def_readonly("translation", &statelix::ICPResult::translation)
+      .def_readonly("rmse", &statelix::ICPResult::rmse)
+      .def_readonly("iterations", &statelix::ICPResult::iterations)
+      .def_readonly("converged", &statelix::ICPResult::converged);
+
+  py::class_<statelix::ICP>(m, "StatelixICP")
+      .def(py::init<>())
+      .def_readwrite("max_iter", &statelix::ICP::max_iter)
+      .def_readwrite("tol", &statelix::ICP::tol)
+      .def("align", &statelix::ICP::align, py::arg("source"), py::arg("target"))
+      .def("align_shinen", &statelix::ICP::align_shinen, py::arg("source"),
+           py::arg("target"));
 }

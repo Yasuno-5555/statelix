@@ -94,6 +94,8 @@ PYBIND11_MODULE(bayes, m) {
       .def("fit_autodiff",
            &statelix::bayes::BayesianLinearRegression::fit_map_autodiff,
            "Fit MAP estimate using Zigen Autodiff")
+      .def("fit_dual", &statelix::bayes::BayesianLinearRegression::fit_map_dual,
+           "Fit MAP estimate using MathUniverse Dual numbers")
       .def("sample", &statelix::bayes::BayesianLinearRegression::sample,
            py::arg("n_samples") = 1000, py::arg("warmup") = 500,
            "Run HMC sampling")

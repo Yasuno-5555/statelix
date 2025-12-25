@@ -12,17 +12,24 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        USER_ID: 1000
+        GROUP_ID: 1000
     container_name: statelix-dev
 
     # 開発時にソースコードをマウント（変更が即反映）
     volumes:
       - .:/statelix
+      - /tmp/.X11-unix:/tmp/.X11-unix
 
     # 環境変数
     environment:
       - PYTHONPATH=/statelix
       - STATELIX_NO_CUDA=1
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
 
     # インタラクティブモード用
     stdin_open: true
     tty: true
+    network_mode: host
