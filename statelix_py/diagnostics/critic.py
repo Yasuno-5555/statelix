@@ -1,7 +1,7 @@
 
 
 import enum
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from .mci import ModelCredibilityIndex, MCIScore
 from .translator import ReasonTranslator
 from .presets import GovernanceMode, GovernancePreset
@@ -106,3 +106,45 @@ class ModelCritic:
                 suggestions.append("Normalize your input features (Z-score) to improve geometric robustness.")
 
         return DiagnosticReport(mci, messages, suggestions)
+
+    def categorize_objection(self, message: str) -> str:
+        """Categorizes a message for tree view display."""
+        msg_l = message.lower()
+        if "fit" in msg_l or "r²" in msg_l or "variance" in msg_l:
+            return "Fit Problems"
+        if "stability" in msg_l or "topo" in msg_l or "fluct" in msg_l:
+            return "Topology Issues"
+        if "robust" in msg_l or "invariant" in msg_l or "geomet" in msg_l:
+            return "Geometry Warnings"
+        if "rejected" in msg_l or "collapse" in msg_l or "fatal" in msg_l:
+            return "Critical Errors"
+        return "Miscellaneous"
+
+    def get_sole_next_action(self, report: DiagnosticReport) -> Optional[Dict[str, str]]:
+        """
+        Distills all suggestions into exactly ONE prioritized 'Next Best Action'.
+        Returns {'action': str, 'desc': str}
+        """
+        if not report.suggestions:
+            return None
+            
+        # Priority: Topology > Geometry > Fit
+        suggs = report.suggestions
+        
+        # 1. Topology (The most dangerous)
+        for s in suggs:
+            if any(w in s.lower() for w in ["regularization", "noise", "bandwidth"]):
+                return {"action": "Stabilize Manifold", "desc": s}
+                
+        # 2. Geometry
+        for s in suggs:
+            if any(w in s.lower() for w in ["normali", "z-score", "invariant", "re-scale"]):
+                return {"action": "Apply Normalization", "desc": s}
+                
+        # 3. Fit
+        for s in suggs:
+            if any(w in s.lower() for w in ["interaction", "non-linear", "terms"]):
+                return {"action": "Complexity Boost", "desc": s}
+                
+        # Fallback to the first one
+        return {"action": "Refine Model", "desc": suggs[0]}

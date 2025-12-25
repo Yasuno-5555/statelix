@@ -186,6 +186,7 @@ class MainWindow(QMainWindow):
         
         self.init_ui()
         self._setup_shortcuts()
+        self._set_ui_state(has_data=False)
     
     def _setup_shortcuts(self):
         from PySide6.QtGui import QShortcut, QKeySequence
@@ -219,6 +220,32 @@ class MainWindow(QMainWindow):
              if len(self._undo_stack) > 20: self._undo_stack.pop(0)
              self._redo_stack.clear()
         self._refresh_all_panels()
+        self._set_ui_state(has_data=True)
+
+    def _set_ui_state(self, has_data):
+        self.mode_tabs.setVisible(has_data)
+        self.onboarding_w.setVisible(not has_data)
+        if hasattr(self, 'brand_badge'):
+            self.brand_badge.setVisible(has_data)
+
+    def run_magic_quickstart(self):
+        """Mock behavior: Open file dialog then run OLS."""
+        fname, _ = QFileDialog.getOpenFileName(self, "Select Data for Quickstart", "", "CSV Files (*.csv)")
+        if fname:
+            from statelix_py.core.data_manager import DataManager
+            dm = DataManager.instance()
+            dm.load_csv(fname)
+            self.on_data_modified()
+            # Select first numeric as Y, rest as X
+            df = dm.df
+            num_cols = df.select_dtypes(include=[np.number]).columns
+            if len(num_cols) >= 2:
+                self.run_analysis({
+                    'model': 'OLS',
+                    'target': num_cols[0],
+                    'features': num_cols[1:].tolist(),
+                    'mode': 'Classic'
+                })
 
     def _refresh_all_panels(self):
         from statelix_py.core.data_manager import DataManager
@@ -246,6 +273,32 @@ class MainWindow(QMainWindow):
         
         self.mode_tabs = QTabWidget()
         layout.addWidget(self.mode_tabs)
+        
+        # --- Empty State / Onboarding ---
+        self.onboarding_w = QWidget()
+        onboarding_layout = QVBoxLayout(self.onboarding_w)
+        onboarding_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        brand_label = QLabel("STATELIX")
+        brand_label.setStyleSheet("font-size: 40px; font-weight: bold; color: #4ec9b0; letter-spacing: 5px;")
+        onboarding_layout.addWidget(brand_label)
+        
+        catchphrase = QLabel("The statistical engine that prioritizes the 'Refusal to Lie' over the 'Ease of Discovery'.")
+        catchphrase.setStyleSheet("color: #888; font-style: italic; margin-bottom: 30px;")
+        onboarding_layout.addWidget(catchphrase)
+        
+        self.btn_quick = QPushButton("Magic Quickstart")
+        self.btn_quick.setStyleSheet("""
+            QPushButton {
+                background-color: #4ec9b0; color: #1e1e1e; font-weight: bold; padding: 15px 40px; 
+                border-radius: 25px; font-size: 16px;
+            }
+            QPushButton:hover { background-color: #5fd9c0; }
+        """)
+        self.btn_quick.clicked.connect(self.run_magic_quickstart)
+        onboarding_layout.addWidget(self.btn_quick)
+        
+        layout.addWidget(self.onboarding_w)
         
         # Expert Mode
         expert_w = QWidget()
@@ -301,6 +354,10 @@ class MainWindow(QMainWindow):
         
         self.statusBar().addPermanentWidget(self.progress_bar)
         self.statusBar().addPermanentWidget(self.btn_cancel_analysis)
+        self.brand_badge = QLabel("Refusal to Lie Engine")
+        self.brand_badge.setStyleSheet("color: #4ec9b0; font-weight: bold; margin-right: 20px; font-size: 10px;")
+        self.statusBar().addPermanentWidget(self.brand_badge)
+        
         self.statusBar().showMessage(t("status.ready"))
 
         # Connections

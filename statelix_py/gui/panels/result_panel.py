@@ -146,7 +146,18 @@ class ResultPanel(QWidget):
             history = diag.get('history', [])
 
         # Update Judge Panel
-        self.diag_panel.update_diagnostics(mci, objections, suggestions, history)
+        report = result_data.get('report')
+        summary = result_data.get('narrative_summary')
+        self.diag_panel.update_diagnostics(mci, objections, suggestions, history, report=report, summary=summary)
+        
+        # If result_data contains raw model/data context, pass for manifold
+        if 'model_context' in result_data:
+             ctx = result_data['model_context']
+             self.diag_panel.set_model_context(ctx['model'], ctx['data'])
+        
+        # If we have a history object, pass it for richer exploration
+        if 'history_obj' in result_data:
+            self.diag_panel.set_history_object(result_data['history_obj'])
         
         # VETO LOGIC: If success is False OR MCI < 0.4
         # Note: If ModelRejectedError was caught, `success` might be False but we have diag data.
