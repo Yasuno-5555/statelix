@@ -347,3 +347,99 @@ def simulate_truth_collapse(
     
     sim = TruthCollapseSimulator(destruction_order=destruction_order)
     return sim.simulate(tube=tube)
+
+
+def compile_claim_text(
+    governance_report: Optional['GovernanceReport'] = None,
+    dialect: str = "academic",
+    effect_name: str = "the effect",
+    target_name: str = "the outcome",
+    model: Optional[BaseEstimator] = None,
+    X = None,
+    y = None
+):
+    """
+    Claim Language Compiler: Project claim space to language.
+    
+    Not a text generator - a controlled projection that respects
+    mathematical constraints on what can be said.
+    
+    Args:
+        governance_report: Pre-computed GovernanceReport
+        dialect: "academic", "referee", "policy_averse", "exploratory"
+        effect_name: Name of the effect
+        target_name: Name of the outcome
+        model: Optional model (for auto-generating report)
+        X: Optional feature matrix
+        y: Optional target
+    
+    Returns:
+        CompiledClaim with text (or rejection reason)
+        
+    Example:
+        >>> claim = compile_claim_text(report, dialect="referee")
+        >>> 
+        >>> if claim.is_valid:
+        ...     print(claim.text)
+        >>> else:
+        ...     print(f"Cannot claim: {claim.rejection_reason}")
+    
+    Dialects:
+    - academic: Conservative, full caveats
+    - referee: Ultra-safe for peer review
+    - policy_averse: No policy implications
+    - exploratory: For notebooks, less formal
+    """
+    from .core.claim_compiler import ClaimCompiler, Dialect, compile_claim
+    
+    dialect_map = {
+        "academic": Dialect.ACADEMIC_CONSERVATIVE,
+        "referee": Dialect.REFEREE_SAFE,
+        "policy_averse": Dialect.POLICY_AVERSE,
+        "exploratory": Dialect.EXPLORATORY_NOTEBOOK,
+    }
+    
+    d = dialect_map.get(dialect.lower(), Dialect.ACADEMIC_CONSERVATIVE)
+    
+    # Generate report if needed
+    if governance_report is None and model is not None and X is not None and y is not None:
+        governance_report = governance_report_func(model, X, y)
+    
+    if governance_report is None:
+        # Minimal report
+        governance_report = governance_report_func()
+    
+    return compile_claim(governance_report, d, effect_name, target_name)
+
+
+def simulate_reviewer_attack(claim, effect_name: str = "the effect"):
+    """
+    Reviewer Attack Simulator: How will your claims be destroyed?
+    
+    Simulates hostile reviewer questioning.
+    
+    Args:
+        claim: CompiledClaim to attack
+        effect_name: Name of the effect
+    
+    Returns:
+        AttackReport with survival probability and vulnerabilities
+    """
+    from .core.claim_compiler import ClaimIR
+    from .core.reviewer_attack import ReviewerAttackSimulator
+    
+    ir = claim.ir if hasattr(claim, 'ir') else ClaimIR(
+        strength=claim.strength if hasattr(claim, 'strength') else None,
+        robustness_score=0.5,
+        nature=None,
+        scope=None,
+        effect_name=effect_name,
+        target_name="outcome"
+    )
+    
+    sim = ReviewerAttackSimulator()
+    return sim.attack(claim, ir)
+
+
+# Alias for governance_report to avoid collision
+governance_report_func = governance_report
