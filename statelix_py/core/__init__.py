@@ -4,6 +4,14 @@ from statelix.bayes import hmc_sample
 import statelix.bayes as bayes
 import statelix.graph as graph
 
+# Unified Mathematical Space
+try:
+    from .unified_space import CausalSpace, RotorTransform, PersistenceDiagram
+    from .feature_synthesizer import FeatureSynthesizer, SynthesizedFeature
+except ImportError:
+    CausalSpace = None
+    FeatureSynthesizer = None
+
 # Fallback init
 causal = None
 statelix_core = None

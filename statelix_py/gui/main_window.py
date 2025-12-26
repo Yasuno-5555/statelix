@@ -229,23 +229,43 @@ class MainWindow(QMainWindow):
             self.brand_badge.setVisible(has_data)
 
     def run_magic_quickstart(self):
-        """Mock behavior: Open file dialog then run OLS."""
+        """One-click entry: Open file dialog then run OLS."""
         fname, _ = QFileDialog.getOpenFileName(self, "Select Data for Quickstart", "", "CSV Files (*.csv)")
         if fname:
             from statelix_py.core.data_manager import DataManager
             dm = DataManager.instance()
-            dm.load_csv(fname)
+            if not dm.load_csv(fname):
+                QMessageBox.critical(self, "Error", f"Failed to load CSV file: {fname}")
+                return
             self.on_data_modified()
             # Select first numeric as Y, rest as X
             df = dm.df
-            num_cols = df.select_dtypes(include=[np.number]).columns
+            num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
             if len(num_cols) >= 2:
+                n_rows = len(df)
+                target = num_cols[0]
+                features = num_cols[1:]
+                
+                # Limit features to avoid n < p singularity issues
+                max_features = max(1, n_rows - 2)
+                if len(features) > max_features:
+                    features = features[:max_features]
+                    self.show_toast(f"Features limited to {max_features} (n={n_rows})")
+                
                 self.run_analysis({
                     'model': 'OLS',
-                    'target': num_cols[0],
-                    'features': num_cols[1:].tolist(),
+                    'target': target,
+                    'features': features,
                     'mode': 'Classic'
                 })
+            else:
+                QMessageBox.warning(
+                    self, 
+                    "Insufficient Numeric Columns", 
+                    f"Quickstart requires at least 2 numeric columns.\n"
+                    f"Found only {len(num_cols)} numeric column(s).\n\n"
+                    f"Please use Expert Mode to configure your analysis manually."
+                )
 
     def _refresh_all_panels(self):
         from statelix_py.core.data_manager import DataManager

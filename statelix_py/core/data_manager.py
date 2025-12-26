@@ -30,6 +30,59 @@ class DataManager:
     def filename(self, name: str):
         self._filename = name
 
+    def load_csv(self, filepath: str):
+        """Load data from a CSV file with auto-encoding detection."""
+        # Try multiple encodings for Japanese CSV files
+        encodings = ['utf-8', 'cp932', 'shift_jis', 'utf-8-sig', 'latin1']
+        last_error = None
+        
+        for encoding in encodings:
+            try:
+                df = pd.read_csv(filepath, encoding=encoding)
+                
+                # Check if first row looks like Japanese labels (SSDSE-style)
+                # If all values in first row are non-numeric strings, skip it
+                first_row = df.iloc[0] if len(df) > 0 else None
+                if first_row is not None:
+                    non_numeric_count = 0
+                    for val in first_row.values[:10]:  # Check first 10 cols
+                        try:
+                            float(str(val).replace(',', ''))
+                        except (ValueError, TypeError):
+                            non_numeric_count += 1
+                    
+                    if non_numeric_count >= 7:  # Likely a label row
+                        df = df.iloc[1:].reset_index(drop=True)
+                
+                # Auto-convert numeric columns
+                for col in df.columns:
+                    try:
+                        # Try to convert to numeric, handling comma separators
+                        converted = pd.to_numeric(
+                            df[col].astype(str).str.replace(',', ''), 
+                            errors='coerce'
+                        )
+                        # If more than 50% are valid numbers, use the conversion
+                        if converted.notna().sum() > len(df) * 0.5:
+                            df[col] = converted
+                    except Exception:
+                        pass
+                
+                self._df = df
+                self._filename = filepath
+                self._history = []
+                self._value_labels = {}
+                return True
+            except UnicodeDecodeError:
+                last_error = f"Encoding {encoding} failed"
+                continue
+            except Exception as e:
+                last_error = str(e)
+                continue
+        
+        print(f"Error loading CSV: {last_error}")
+        return False
+
     def set_data(self, dataframe: pd.DataFrame, filepath: str = ""):
         """Set both dataframe and filename at once."""
         self._df = dataframe

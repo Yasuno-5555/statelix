@@ -1,8 +1,11 @@
 
 import numpy as np
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, TYPE_CHECKING
 import copy
+
+if TYPE_CHECKING:
+    from statelix_py.core.unified_space import CausalSpace
 
 @dataclass
 class ManifoldPoint:
@@ -16,12 +19,37 @@ class CausalManifold:
     """
     Computes the stability manifold for causal models.
     Sweeps through key hyperparameters to detect 'cliffs' or singularities.
+    
+    Enhanced with CausalSpace integration for tensor-backed operations
+    and persistent homology-based stability computation.
     """
     
-    def __init__(self, model: Any, data: Dict[str, Any]):
+    def __init__(self, model: Any, data: Dict[str, Any], causal_space: Optional['CausalSpace'] = None):
         self.model = model
         self.data = data
         self.points: List[ManifoldPoint] = []
+        self.causal_space = causal_space  # Optional unified space integration
+    
+    def compute_stability_as_ph_gradient(self) -> np.ndarray:
+        """
+        Compute stability using persistent homology gradient.
+        
+        When CausalSpace is available, uses topological stability analysis.
+        Falls back to standard error-based stability otherwise.
+        """
+        if self.causal_space is not None:
+            return self.causal_space.compute_stability_gradient()
+        
+        # Legacy fallback: use standard errors as stability proxy
+        if self.points:
+            return np.array([p.std_error for p in self.points])
+        return np.array([])
+    
+    def get_tensor_representation(self) -> Optional[np.ndarray]:
+        """Get the tensor representation of the manifold if available."""
+        if self.causal_space is not None:
+            return self.causal_space.points
+        return None
 
     def compute_manifold(self, n_steps: int = 20) -> List[ManifoldPoint]:
         """Auto-detect model type and compute appropriate manifold."""
