@@ -230,3 +230,72 @@ def get_cliff_warning(state=None):
     
     learner = get_cliff_learner()
     return learner.warning_message(state)
+
+
+def governance_report(
+    model: Optional[BaseEstimator] = None,
+    X = None,
+    y = None,
+    tube: Optional['AssumptionTube'] = None,
+    path: Optional['AssumptionPath'] = None,
+    **context
+):
+    """
+    Generate comprehensive governance report.
+    
+    Combines:
+    - One-Way Door Analysis: irreversible assumption relaxations
+    - Claim Budget: maximum claim strength allowed
+    - The Last Honest Sentence: the one thing you can truthfully say
+    
+    Args:
+        model: Optional model for analysis
+        X: Optional feature matrix
+        y: Optional target
+        tube: Pre-computed AssumptionTube
+        path: Pre-computed AssumptionPath
+        **context: Additional context (effect_name, target_name, etc.)
+    
+    Returns:
+        GovernanceReport with verdict, honest sentence, and warnings
+        
+    Example:
+        >>> report = governance_report(model, X, y)
+        >>> 
+        >>> print(f"Verdict: {report.verdict}")
+        >>> print(f"Honest Sentence: {report.honest_sentence.sentence}")
+        >>> print(report.to_markdown())
+    """
+    from .core.governance_report import GovernanceReportGenerator
+    
+    # Generate tube if needed
+    if tube is None and model is not None and X is not None and y is not None:
+        tube = analyze_robustness(model, X, y, detect_cliffs=True)
+        if tube.base_path:
+            path = tube.base_path
+    
+    gen = GovernanceReportGenerator()
+    return gen.generate(tube=tube, path=path, context=context)
+
+
+def get_honest_sentence(
+    tube: Optional['AssumptionTube'] = None,
+    path: Optional['AssumptionPath'] = None,
+    **context
+) -> str:
+    """
+    Get the single honest sentence for your analysis.
+    
+    This is the ONE thing you can truthfully claim.
+    
+    Args:
+        tube: Pre-computed AssumptionTube
+        path: Pre-computed AssumptionPath  
+        **context: Additional context
+    
+    Returns:
+        The honest sentence as a string
+    """
+    from .core.honest_sentence import generate_honest_sentence
+    honest = generate_honest_sentence(tube, path, **context)
+    return honest.sentence
