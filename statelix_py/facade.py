@@ -443,3 +443,106 @@ def simulate_reviewer_attack(claim, effect_name: str = "the effect"):
 
 # Alias for governance_report to avoid collision
 governance_report_func = governance_report
+
+
+def evaluate_responsibility(
+    claim_text: str = "",
+    effect_name: str = "the effect",
+    target_name: str = "the outcome",
+    robustness_score: float = 0.5,
+    context: Optional[str] = None
+):
+    """
+    Responsibility Sink: Where claims fall before they reach the world.
+    
+    Evaluates whether a claim should be made based on impact,
+    not just whether it CAN be made.
+    
+    Args:
+        claim_text: The text being evaluated
+        effect_name: Name of the effect
+        target_name: Name of the outcome
+        robustness_score: Robustness of the analysis
+        context: Additional context
+    
+    Returns:
+        ResponsibilityBudget with verdict
+        
+    Example:
+        >>> budget = evaluate_responsibility(
+        ...     effect_name="criminal prediction",
+        ...     target_name="individual"
+        ... )
+        >>> 
+        >>> if not budget.can_proceed:
+        ...     print(f"Cannot claim: {budget.rejection_reason}")
+    
+    Impact Classes:
+    - academic_only: Low bar
+    - policy_triggering: Requires 0.6+ robustness
+    - individual_targeting: Requires 0.95+ (usually rejected)
+    """
+    from .core.claim_compiler import ClaimIR, ClaimNature, ClaimScope
+    from .core.claim_budget import ClaimStrength
+    from .core.responsibility_sink import ResponsibilitySink
+    
+    # Create minimal IR
+    strength = ClaimStrength.MODERATE if robustness_score > 0.4 else ClaimStrength.WEAK
+    
+    ir = ClaimIR(
+        strength=strength,
+        robustness_score=robustness_score,
+        nature=ClaimNature.ASSOCIATIVE,
+        scope=ClaimScope.SAMPLE_ONLY,
+        effect_name=effect_name,
+        target_name=target_name
+    )
+    
+    sink = ResponsibilitySink()
+    return sink.evaluate(ir, context=context)
+
+
+def generate_responsible_claim(
+    governance_rep = None,
+    effect_name: str = "the effect",
+    target_name: str = "the outcome",
+    model: Optional[BaseEstimator] = None,
+    X = None,
+    y = None
+):
+    """
+    Generate the Last Responsible Sentence.
+    
+    Minimizes harm while preserving truth.
+    Adds ethical disclaimers where necessary.
+    
+    Args:
+        governance_rep: GovernanceReport
+        effect_name: Name of the effect
+        target_name: Name of the outcome
+        model: Optional model
+        X: Optional features
+        y: Optional target
+    
+    Returns:
+        ResponsibleClaim with final text and modifications
+    """
+    from .core.claim_compiler import compile_claim, Dialect
+    from .core.responsibility_sink import ResponsibilitySink
+    
+    # Get governance report
+    if governance_rep is None:
+        if model is not None and X is not None and y is not None:
+            governance_rep = governance_report_func(model, X, y)
+        else:
+            governance_rep = governance_report_func()
+    
+    # Compile claim
+    claim = compile_claim(governance_rep, Dialect.ACADEMIC_CONSERVATIVE, effect_name, target_name)
+    
+    # Generate responsible version
+    from .core.claim_compiler import ClaimIR
+    ir = ClaimIR.from_governance_report(governance_rep, effect_name, target_name)
+    
+    sink = ResponsibilitySink()
+    return sink.generate_responsible_claim(ir, claim)
