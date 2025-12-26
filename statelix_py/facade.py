@@ -299,3 +299,51 @@ def get_honest_sentence(
     from .core.honest_sentence import generate_honest_sentence
     honest = generate_honest_sentence(tube, path, **context)
     return honest.sentence
+
+
+def simulate_truth_collapse(
+    model: Optional[BaseEstimator] = None,
+    X = None,
+    y = None,
+    tube: Optional['AssumptionTube'] = None,
+    destruction_order: Optional[list] = None
+):
+    """
+    Truth Collapse Simulator: How does your conclusion die?
+    
+    Systematically destroys assumptions to reveal:
+    - The order in which truth collapses
+    - When claims become unsustainable  
+    - The archetype of your analysis's death
+    
+    Args:
+        model: Optional model for analysis
+        X: Optional feature matrix
+        y: Optional target
+        tube: Pre-computed AssumptionTube
+        destruction_order: Custom assumption destruction order
+    
+    Returns:
+        CollapseReport with schedule, archetype, and timeline
+        
+    Example:
+        >>> report = simulate_truth_collapse(model, X, y)
+        >>> 
+        >>> print(f"{report.schedule.archetype.icon} {report.schedule.archetype.description}")
+        >>> print(f"Death at stage: {report.schedule.death_stage}")
+        >>> print(f"Critical assumption: {report.schedule.critical_assumption}")
+    
+    Archetypes:
+    - 🗼 Glass Tower: Strong initially, shatters instantly
+    - ☁️ Marshmallow: Never strong, survives but says nothing  
+    - 🔩 Steel Rod: Survives long, thin claims
+    - 🐯 Paper Tiger: Looks strong, tube is paper-thin
+    """
+    from .core.collapse_simulator import TruthCollapseSimulator
+    
+    # Generate tube if needed
+    if tube is None and model is not None and X is not None and y is not None:
+        tube = analyze_robustness(model, X, y, detect_cliffs=True)
+    
+    sim = TruthCollapseSimulator(destruction_order=destruction_order)
+    return sim.simulate(tube=tube)
